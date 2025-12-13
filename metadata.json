@@ -1,0 +1,5 @@
+{
+  "name": "CineTrack",
+  "description": "A personal movie and series tracker with a Netflix-style grid interface, powered by TMDB.",
+  "requestFramePermissions": []
+}
