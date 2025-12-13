@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2 } from 'lucide-react';
+import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2, UserCircle } from 'lucide-react';
 import { MediaItem, SearchResult, WatchStatus } from './types';
 import MediaCard from './components/MediaCard';
 import AddMediaModal from './components/AddMediaModal';
@@ -13,6 +13,7 @@ import { collection, onSnapshot, query, setDoc, doc, deleteDoc } from 'firebase/
 const App: React.FC = () => {
   // --- State ---
   const [user, setUser] = useState<User | null>(null);
+  const [isGuest, setIsGuest] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [library, setLibrary] = useState<MediaItem[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -29,16 +30,38 @@ const App: React.FC = () => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthLoading(false);
+      // If user logs in, ensure guest mode is off
+      if (currentUser) setIsGuest(false);
     });
     return () => unsubscribeAuth();
   }, []);
 
   useEffect(() => {
+    // 1. Guest Mode Logic
+    if (isGuest) {
+        setLibraryLoading(true);
+        const saved = localStorage.getItem('cine_library');
+        if (saved) {
+            try {
+                setLibrary(JSON.parse(saved));
+            } catch (e) {
+                console.error("Failed to parse local library", e);
+                setLibrary([]);
+            }
+        } else {
+            setLibrary([]);
+        }
+        setLibraryLoading(false);
+        return;
+    }
+
+    // 2. Not logged in and not guest -> clear
     if (!user) {
         setLibrary([]);
         return;
     }
 
+    // 3. Firebase Logic
     setLibraryLoading(true);
     // Reference: users/{userId}/library
     const libraryRef = collection(db, 'users', user.uid, 'library');
@@ -57,7 +80,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribeSnapshot();
-  }, [user]);
+  }, [user, isGuest]);
 
   // --- Derived State (Filtering) ---
   const filteredLibrary = useMemo(() => {
@@ -85,7 +108,7 @@ const App: React.FC = () => {
 
   // --- Handlers ---
   const handleAddItem = async (result: SearchResult) => {
-    if (!user) return;
+    if (!user && !isGuest) return;
 
     // Fetch additional details (Runtime)
     const details = await getMediaDetails(result.tmdbId, result.type);
@@ -108,13 +131,21 @@ const App: React.FC = () => {
       releaseSource: result.type === 'movie' ? 'Theater' : undefined, // Default to theater for movies
     };
     
-    // Optimistic UI update (though snapshot is fast)
+    // Optimistic UI update
     setIsAddModalOpen(false);
     setEditingItem(newItem);
 
-    // Save to Firestore
+    // GUEST LOGIC
+    if (isGuest) {
+        const newLibrary = [newItem, ...library];
+        setLibrary(newLibrary);
+        localStorage.setItem('cine_library', JSON.stringify(newLibrary));
+        return;
+    }
+
+    // FIREBASE LOGIC
     try {
-        await setDoc(doc(db, 'users', user.uid, 'library', id), newItem);
+        await setDoc(doc(db, 'users', user!.uid, 'library', id), newItem);
     } catch (e) {
         console.error("Error adding document: ", e);
         alert("Failed to save item to database.");
@@ -122,21 +153,41 @@ const App: React.FC = () => {
   };
 
   const handleUpdateItem = async (updated: MediaItem) => {
-    if (!user) return;
+    if (!user && !isGuest) return;
     setEditingItem(null);
+
+    // GUEST LOGIC
+    if (isGuest) {
+        const newLibrary = library.map(item => item.id === updated.id ? updated : item);
+        setLibrary(newLibrary);
+        localStorage.setItem('cine_library', JSON.stringify(newLibrary));
+        return;
+    }
+
+    // FIREBASE LOGIC
     try {
-        await setDoc(doc(db, 'users', user.uid, 'library', updated.id), updated);
+        await setDoc(doc(db, 'users', user!.uid, 'library', updated.id), updated);
     } catch (e) {
         console.error("Error updating document: ", e);
     }
   };
 
   const handleDeleteItem = async (id: string) => {
-    if (!user) return;
+    if (!user && !isGuest) return;
     if (confirm('Are you sure you want to remove this from your library?')) {
         setEditingItem(null);
+
+        // GUEST LOGIC
+        if (isGuest) {
+            const newLibrary = library.filter(item => item.id !== id);
+            setLibrary(newLibrary);
+            localStorage.setItem('cine_library', JSON.stringify(newLibrary));
+            return;
+        }
+
+        // FIREBASE LOGIC
         try {
-            await deleteDoc(doc(db, 'users', user.uid, 'library', id));
+            await deleteDoc(doc(db, 'users', user!.uid, 'library', id));
         } catch (e) {
             console.error("Error deleting document: ", e);
         }
@@ -144,7 +195,7 @@ const App: React.FC = () => {
   };
 
   const handleQuickAction = async (item: MediaItem, action: 'watched' | 'increment') => {
-    if (!user) return;
+    if (!user && !isGuest) return;
 
     let updated = { ...item };
     if (action === 'watched') {
@@ -155,11 +206,29 @@ const App: React.FC = () => {
         updated.progress = { ...item.progress, episode: currentEp + 1 };
     }
     
+    // GUEST LOGIC
+    if (isGuest) {
+        const newLibrary = library.map(l => l.id === item.id ? updated : l);
+        setLibrary(newLibrary);
+        localStorage.setItem('cine_library', JSON.stringify(newLibrary));
+        return;
+    }
+
+    // FIREBASE LOGIC
     try {
-        await setDoc(doc(db, 'users', user.uid, 'library', item.id), updated);
+        await setDoc(doc(db, 'users', user!.uid, 'library', item.id), updated);
     } catch (e) {
         console.error("Error updating quick action: ", e);
     }
+  };
+
+  const handleLogout = () => {
+      if (isGuest) {
+          setIsGuest(false);
+          setLibrary([]);
+      } else {
+          logout();
+      }
   };
 
   // --- Render Loading / Auth / App ---
@@ -172,8 +241,8 @@ const App: React.FC = () => {
       );
   }
 
-  if (!user) {
-      return <LoginScreen />;
+  if (!user && !isGuest) {
+      return <LoginScreen onGuestLogin={() => setIsGuest(true)} />;
   }
 
   return (
@@ -228,9 +297,15 @@ const App: React.FC = () => {
                 <Plus size={18} strokeWidth={3} /> <span className="hidden sm:inline">Add</span>
             </button>
 
+            {isGuest && (
+                <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-yellow-500 bg-yellow-500/10 px-3 py-1.5 rounded-full border border-yellow-500/20">
+                    <UserCircle size={14} /> Guest Mode
+                </div>
+            )}
+
             <button
-                onClick={logout}
-                title="Sign Out"
+                onClick={handleLogout}
+                title={isGuest ? "Exit Guest Mode" : "Sign Out"}
                 className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-colors"
             >
                 <LogOut size={20} />
@@ -328,7 +403,7 @@ const App: React.FC = () => {
                     {libraryLoading ? 'Loading Library...' : 'No media found'}
                 </p>
                 <p className="text-sm mt-2 opacity-60">
-                    {libraryLoading ? 'Syncing with cloud database...' : 'Try adjusting your filters or search query.'}
+                    {libraryLoading ? 'Syncing with database...' : 'Try adjusting your filters or search query.'}
                 </p>
                 {!libraryLoading && library.length === 0 && (
                     <button onClick={() => setIsAddModalOpen(true)} className="mt-6 text-black bg-white px-6 py-2 rounded-full font-bold hover:scale-105 transition-transform">
