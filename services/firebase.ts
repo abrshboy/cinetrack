@@ -21,9 +21,20 @@ export const googleProvider = new GoogleAuthProvider();
 export const signInWithGoogle = async () => {
   try {
     await signInWithPopup(auth, googleProvider);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error signing in", error);
-    alert("Failed to sign in. Check console for details.");
+    
+    // Handle specific error codes for better user guidance
+    if (error.code === 'auth/configuration-not-found') {
+        alert("Configuration Error: Google Sign-In is not enabled in the Firebase Console.\n\nPlease enable it in Authentication > Sign-in method > Google.");
+    } else if (error.code === 'auth/popup-closed-by-user') {
+        // User closed the popup, no need to alert
+        return;
+    } else if (error.code === 'auth/operation-not-allowed') {
+        alert("Operation Error: The Google provider is disabled in Firebase Console.");
+    } else {
+        alert(`Failed to sign in: ${error.message}`);
+    }
   }
 };
 
