@@ -1,8 +1,41 @@
-import React from 'react';
-import { Clapperboard } from 'lucide-react';
+import React, { useState } from 'react';
+import { Clapperboard, AlertTriangle, Copy, Check } from 'lucide-react';
 import { signInWithGoogle } from '../services/firebase';
 
 const LoginScreen: React.FC = () => {
+  const [error, setError] = useState<{code: string; message: string; domain?: string} | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleLogin = async () => {
+    setError(null);
+    try {
+      await signInWithGoogle();
+    } catch (err: any) {
+      console.error("Login Error:", err);
+      
+      let errorData = { code: err.code, message: err.message, domain: '' };
+
+      if (err.code === 'auth/unauthorized-domain') {
+         errorData.domain = window.location.hostname;
+         errorData.message = "This domain is not authorized.";
+      } else if (err.code === 'auth/configuration-not-found') {
+         errorData.message = "Google Sign-In is not enabled in Firebase Console.";
+      } else if (err.code === 'auth/popup-closed-by-user') {
+         return; // Ignore
+      }
+
+      setError(errorData);
+    }
+  };
+
+  const copyDomain = () => {
+    if (error?.domain) {
+      navigator.clipboard.writeText(error.domain);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[url('https://assets.nflxext.com/ffe/siteui/vlv3/c38a2d52-138e-48a3-ab68-36787ece46b3/eeb03fc9-99c6-438e-824d-32917ce55783/US-en-20240101-popsignuptwoweeks-perspective_alpha_website_large.jpg')] bg-cover bg-center flex items-center justify-center relative">
       {/* Dark Overlay */}
@@ -18,7 +51,7 @@ const LoginScreen: React.FC = () => {
         <p className="text-gray-400 mb-8">Track your movies, series, and watch history across all your devices.</p>
 
         <button 
-            onClick={signInWithGoogle}
+            onClick={handleLogin}
             className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-md transition-all transform hover:scale-[1.02] shadow-lg flex items-center justify-center gap-3"
         >
             <svg className="w-5 h-5 bg-white rounded-full p-0.5" viewBox="0 0 24 24">
@@ -29,6 +62,45 @@ const LoginScreen: React.FC = () => {
             </svg>
             Sign in with Google
         </button>
+
+        {error && (
+            <div className="mt-6 w-full text-left bg-red-900/30 border border-red-500/50 rounded-lg p-4 animate-in slide-in-from-top-2">
+                <div className="flex items-start gap-3">
+                    <AlertTriangle className="text-red-500 flex-shrink-0 mt-0.5" size={20}/>
+                    <div className="flex-1">
+                        <h3 className="font-bold text-red-200 text-sm mb-1">
+                            {error.code === 'auth/unauthorized-domain' ? 'Domain Not Authorized' : 'Login Failed'}
+                        </h3>
+                        <p className="text-xs text-gray-300 mb-3 leading-relaxed">
+                            {error.code === 'auth/unauthorized-domain' 
+                                ? "Firebase blocks unknown domains for security. You must whitelist the current URL to sign in." 
+                                : error.message}
+                        </p>
+                        
+                        {error.code === 'auth/unauthorized-domain' && (
+                            <div className="bg-black/50 rounded p-2 flex items-center justify-between gap-2 border border-white/10">
+                                <code className="text-xs text-orange-300 truncate font-mono select-all">
+                                    {error.domain}
+                                </code>
+                                <button 
+                                    onClick={copyDomain}
+                                    className="p-1.5 hover:bg-white/10 rounded transition-colors text-gray-400 hover:text-white"
+                                    title="Copy Domain"
+                                >
+                                    {copied ? <Check size={14} className="text-green-500"/> : <Copy size={14}/>}
+                                </button>
+                            </div>
+                        )}
+                        
+                        {error.code === 'auth/unauthorized-domain' && (
+                             <p className="text-[10px] text-gray-500 mt-2">
+                                Go to Firebase Console &gt; Authentication &gt; Settings &gt; Authorized Domains and add the domain above.
+                             </p>
+                        )}
+                    </div>
+                </div>
+            </div>
+        )}
         
         <p className="mt-8 text-xs text-gray-500">
             Powered by TMDB and Firebase. <br/>
