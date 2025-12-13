@@ -17,24 +17,36 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onGuestLogin, onPersonalLocal
     try {
       await signInPersonal();
     } catch (err: any) {
-      console.error("Login Error:", err);
-      
-      // Fallback for preview environments where Firebase Auth is not configured
-      if (err.code === 'auth/operation-not-allowed' || err.code === 'auth/internal-error') {
-         // Proceed as if logged in, but use local storage
+      const errorCode = err.code || '';
+      const errorMessage = err.message || '';
+
+      // CHECK: If Firebase Auth Email/Password provider is disabled (operation-not-allowed)
+      // or if there's a configuration error, strictly fallback to Local Mode.
+      if (
+          errorCode === 'auth/operation-not-allowed' || 
+          errorCode === 'auth/internal-error' || 
+          errorCode === 'auth/admin-restricted-operation' ||
+          errorMessage.includes('auth/operation-not-allowed') ||
+          errorMessage.includes('operation is not allowed')
+      ) {
+         console.warn("Firebase Auth not configured. Switching to Local Personal Mode.");
          onPersonalLocalLogin();
          return; 
       }
 
-      let message = err.message;
+      console.error("Login Error:", err);
       
-      if (err.code === 'auth/network-request-failed') {
+      let message = errorMessage;
+      
+      if (errorCode === 'auth/network-request-failed') {
         message = "Network error. Please check your internet connection.";
-      } else if (err.code === 'auth/invalid-credential') {
-        message = "Invalid credentials or account setup issue.";
+      } else if (errorCode === 'auth/invalid-credential') {
+        message = "Invalid credentials. Please checking your code.";
+      } else if (errorCode === 'auth/wrong-password') {
+         message = "Incorrect password.";
       }
 
-      setError({ code: err.code, message: message });
+      setError({ code: errorCode, message: message });
     } finally {
       setIsLoading(false);
     }
@@ -84,7 +96,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onGuestLogin, onPersonalLocal
                 <div className="flex items-start gap-3">
                     <AlertTriangle className="text-red-500 flex-shrink-0 mt-0.5" size={20}/>
                     <div className="flex-1">
-                        <h3 className="font-bold text-red-200 text-sm mb-1">Access Denied</h3>
+                        <h3 className="font-bold text-red-200 text-sm mb-1">Login Failed</h3>
                         <p className="text-xs text-gray-300 leading-relaxed">
                             {error.message}
                         </p>
@@ -94,7 +106,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onGuestLogin, onPersonalLocal
         )}
         
         <p className="mt-8 text-xs text-gray-500">
-            Powered by TMDB and Firebase.
+            Powered by TMDB. <br/>
+            Owner Mode saves to local storage if Firebase is unavailable.
         </p>
       </div>
     </div>

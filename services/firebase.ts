@@ -34,14 +34,14 @@ export const signInPersonal = async () => {
     // Try to sign in first
     await signInWithEmailAndPassword(auth, PERSONAL_EMAIL, PERSONAL_PASS);
   } catch (error: any) {
-    console.log("Sign in failed, checking reason:", error.code);
-    
-    // If user doesn't exist, create it automatically
+    // If user doesn't exist or invalid credential (logic varies by SDK version/config)
+    // we try to create the account.
     if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
       try {
         await createUserWithEmailAndPassword(auth, PERSONAL_EMAIL, PERSONAL_PASS);
       } catch (createError: any) {
-        // If creation fails (e.g. Email/Password provider not enabled), throw that error
+        // This will likely throw 'auth/operation-not-allowed' if the provider is disabled.
+        // We throw it up so LoginScreen can catch it and switch to Local Mode.
         throw createError;
       }
     } else {
