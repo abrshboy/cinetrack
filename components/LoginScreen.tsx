@@ -4,9 +4,10 @@ import { signInPersonal } from '../services/firebase';
 
 interface LoginScreenProps {
   onGuestLogin: () => void;
+  onPersonalLocalLogin: () => void;
 }
 
-const LoginScreen: React.FC<LoginScreenProps> = ({ onGuestLogin }) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ onGuestLogin, onPersonalLocalLogin }) => {
   const [error, setError] = useState<{code: string; message: string} | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -18,11 +19,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onGuestLogin }) => {
     } catch (err: any) {
       console.error("Login Error:", err);
       
+      // Fallback for preview environments where Firebase Auth is not configured
+      if (err.code === 'auth/operation-not-allowed' || err.code === 'auth/internal-error') {
+         // Proceed as if logged in, but use local storage
+         onPersonalLocalLogin();
+         return; 
+      }
+
       let message = err.message;
       
-      if (err.code === 'auth/operation-not-allowed') {
-        message = "Email/Password provider is disabled. Enable it in Firebase Console > Authentication.";
-      } else if (err.code === 'auth/network-request-failed') {
+      if (err.code === 'auth/network-request-failed') {
         message = "Network error. Please check your internet connection.";
       } else if (err.code === 'auth/invalid-credential') {
         message = "Invalid credentials or account setup issue.";

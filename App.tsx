@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2, UserCircle } from 'lucide-react';
+import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2, UserCircle, Database, CloudOff } from 'lucide-react';
 import { MediaItem, SearchResult, WatchStatus } from './types';
 import MediaCard from './components/MediaCard';
 import AddMediaModal from './components/AddMediaModal';
@@ -13,7 +13,11 @@ import { collection, onSnapshot, query, setDoc, doc, deleteDoc } from 'firebase/
 const App: React.FC = () => {
   // --- State ---
   const [user, setUser] = useState<User | null>(null);
+  
+  // Modes: Guest (public local), Personal Local (owner but offline/config error), Authenticated (Firebase)
   const [isGuest, setIsGuest] = useState(false);
+  const [isPersonalLocal, setIsPersonalLocal] = useState(false);
+  
   const [authLoading, setAuthLoading] = useState(true);
   const [library, setLibrary] = useState<MediaItem[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -30,22 +34,25 @@ const App: React.FC = () => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthLoading(false);
-      // If user logs in, ensure guest mode is off
-      if (currentUser) setIsGuest(false);
+      // If user logs in via Firebase, ensure local modes are off
+      if (currentUser) {
+          setIsGuest(false);
+          setIsPersonalLocal(false);
+      }
     });
     return () => unsubscribeAuth();
   }, []);
 
   useEffect(() => {
-    // 1. Guest Mode Logic
-    if (isGuest) {
+    // 1. Personal Local Mode (Fallback for broken Firebase Config)
+    if (isPersonalLocal) {
         setLibraryLoading(true);
-        const saved = localStorage.getItem('cine_library');
+        const saved = localStorage.getItem('cine_library_personal');
         if (saved) {
             try {
                 setLibrary(JSON.parse(saved));
             } catch (e) {
-                console.error("Failed to parse local library", e);
+                console.error("Failed to parse personal library", e);
                 setLibrary([]);
             }
         } else {
@@ -55,15 +62,32 @@ const App: React.FC = () => {
         return;
     }
 
-    // 2. Not logged in and not guest -> clear
+    // 2. Guest Mode Logic
+    if (isGuest) {
+        setLibraryLoading(true);
+        const saved = localStorage.getItem('cine_library');
+        if (saved) {
+            try {
+                setLibrary(JSON.parse(saved));
+            } catch (e) {
+                console.error("Failed to parse guest library", e);
+                setLibrary([]);
+            }
+        } else {
+            setLibrary([]);
+        }
+        setLibraryLoading(false);
+        return;
+    }
+
+    // 3. Not logged in and not in any local mode -> clear
     if (!user) {
         setLibrary([]);
         return;
     }
 
-    // 3. Firebase Logic
+    // 4. Firebase Logic
     setLibraryLoading(true);
-    // Reference: users/{userId}/library
     const libraryRef = collection(db, 'users', user.uid, 'library');
     const q = query(libraryRef);
 
@@ -76,41 +100,43 @@ const App: React.FC = () => {
         setLibraryLoading(false);
     }, (error) => {
         console.error("Error fetching library:", error);
+        // If Firebase fails to read (e.g. permission denied or config error), maybe fallback?
+        // For now, just stop loading.
         setLibraryLoading(false);
     });
 
     return () => unsubscribeSnapshot();
-  }, [user, isGuest]);
+  }, [user, isGuest, isPersonalLocal]);
 
   // --- Derived State (Filtering) ---
   const filteredLibrary = useMemo(() => {
     return library
       .filter(item => {
-        // Filter by Tab (Status)
         if (activeTab !== 'all' && item.status !== activeTab) return false;
-        // Filter by Type (Movie/Series)
         if (activeType !== 'all' && item.type !== activeType) return false;
-        // Filter by Search
         if (searchQuery && !item.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
         return true;
       })
-      .sort((a, b) => b.addedAt - a.addedAt); // Newest first
+      .sort((a, b) => b.addedAt - a.addedAt);
   }, [library, activeTab, activeType, searchQuery]);
 
-  // Split logic for Movies (Theater vs VOD)
   const movieSections = useMemo(() => {
     if (activeType !== 'movie') return null;
-
     const theatrical = filteredLibrary.filter(item => !item.releaseSource || item.releaseSource === 'Theater');
     const vod = filteredLibrary.filter(item => item.releaseSource === 'VOD');
     return { theatrical, vod };
   }, [filteredLibrary, activeType]);
 
+  // --- Helpers ---
+  const saveToLocal = (items: MediaItem[], key: string) => {
+      setLibrary(items);
+      localStorage.setItem(key, JSON.stringify(items));
+  };
+
   // --- Handlers ---
   const handleAddItem = async (result: SearchResult) => {
-    if (!user && !isGuest) return;
+    if (!user && !isGuest && !isPersonalLocal) return;
 
-    // Fetch additional details (Runtime)
     const details = await getMediaDetails(result.tmdbId, result.type);
     const id = crypto.randomUUID();
 
@@ -119,7 +145,7 @@ const App: React.FC = () => {
       tmdbId: result.tmdbId,
       title: result.title,
       type: result.type,
-      status: 'watchlist', // Default status
+      status: 'watchlist',
       year: result.year,
       description: result.description,
       posterPath: result.posterPath,
@@ -128,43 +154,46 @@ const App: React.FC = () => {
       runtime: details.runtime,
       addedAt: Date.now(),
       progress: { season: 1, episode: 1 },
-      releaseSource: result.type === 'movie' ? 'Theater' : undefined, // Default to theater for movies
+      releaseSource: result.type === 'movie' ? 'Theater' : undefined,
     };
     
-    // Optimistic UI update
     setIsAddModalOpen(false);
     setEditingItem(newItem);
 
-    // GUEST LOGIC
-    if (isGuest) {
-        const newLibrary = [newItem, ...library];
-        setLibrary(newLibrary);
-        localStorage.setItem('cine_library', JSON.stringify(newLibrary));
+    // LOGIC ROUTING
+    if (isPersonalLocal) {
+        saveToLocal([newItem, ...library], 'cine_library_personal');
         return;
     }
 
-    // FIREBASE LOGIC
+    if (isGuest) {
+        saveToLocal([newItem, ...library], 'cine_library');
+        return;
+    }
+
+    // FIREBASE
     try {
         await setDoc(doc(db, 'users', user!.uid, 'library', id), newItem);
     } catch (e) {
         console.error("Error adding document: ", e);
-        alert("Failed to save item to database.");
+        alert("Failed to save item. Check internet or permissions.");
     }
   };
 
   const handleUpdateItem = async (updated: MediaItem) => {
-    if (!user && !isGuest) return;
+    if (!user && !isGuest && !isPersonalLocal) return;
     setEditingItem(null);
 
-    // GUEST LOGIC
-    if (isGuest) {
-        const newLibrary = library.map(item => item.id === updated.id ? updated : item);
-        setLibrary(newLibrary);
-        localStorage.setItem('cine_library', JSON.stringify(newLibrary));
+    if (isPersonalLocal) {
+        saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library_personal');
         return;
     }
 
-    // FIREBASE LOGIC
+    if (isGuest) {
+        saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library');
+        return;
+    }
+
     try {
         await setDoc(doc(db, 'users', user!.uid, 'library', updated.id), updated);
     } catch (e) {
@@ -173,19 +202,20 @@ const App: React.FC = () => {
   };
 
   const handleDeleteItem = async (id: string) => {
-    if (!user && !isGuest) return;
+    if (!user && !isGuest && !isPersonalLocal) return;
     if (confirm('Are you sure you want to remove this from your library?')) {
         setEditingItem(null);
 
-        // GUEST LOGIC
-        if (isGuest) {
-            const newLibrary = library.filter(item => item.id !== id);
-            setLibrary(newLibrary);
-            localStorage.setItem('cine_library', JSON.stringify(newLibrary));
+        if (isPersonalLocal) {
+            saveToLocal(library.filter(item => item.id !== id), 'cine_library_personal');
             return;
         }
 
-        // FIREBASE LOGIC
+        if (isGuest) {
+            saveToLocal(library.filter(item => item.id !== id), 'cine_library');
+            return;
+        }
+
         try {
             await deleteDoc(doc(db, 'users', user!.uid, 'library', id));
         } catch (e) {
@@ -195,26 +225,26 @@ const App: React.FC = () => {
   };
 
   const handleQuickAction = async (item: MediaItem, action: 'watched' | 'increment') => {
-    if (!user && !isGuest) return;
+    if (!user && !isGuest && !isPersonalLocal) return;
 
     let updated = { ...item };
     if (action === 'watched') {
         updated.status = 'watched' as WatchStatus;
     } else if (action === 'increment') {
-        // Only for series in progress
         const currentEp = item.progress.episode || 1;
         updated.progress = { ...item.progress, episode: currentEp + 1 };
     }
     
-    // GUEST LOGIC
-    if (isGuest) {
-        const newLibrary = library.map(l => l.id === item.id ? updated : l);
-        setLibrary(newLibrary);
-        localStorage.setItem('cine_library', JSON.stringify(newLibrary));
+    if (isPersonalLocal) {
+        saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library_personal');
         return;
     }
 
-    // FIREBASE LOGIC
+    if (isGuest) {
+        saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library');
+        return;
+    }
+
     try {
         await setDoc(doc(db, 'users', user!.uid, 'library', item.id), updated);
     } catch (e) {
@@ -223,15 +253,13 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
-      if (isGuest) {
-          setIsGuest(false);
-          setLibrary([]);
-      } else {
-          logout();
-      }
+      setIsGuest(false);
+      setIsPersonalLocal(false);
+      setLibrary([]);
+      if (user) logout();
   };
 
-  // --- Render Loading / Auth / App ---
+  // --- Render ---
 
   if (authLoading) {
       return (
@@ -241,8 +269,13 @@ const App: React.FC = () => {
       );
   }
 
-  if (!user && !isGuest) {
-      return <LoginScreen onGuestLogin={() => setIsGuest(true)} />;
+  if (!user && !isGuest && !isPersonalLocal) {
+      return (
+        <LoginScreen 
+            onGuestLogin={() => setIsGuest(true)} 
+            onPersonalLocalLogin={() => setIsPersonalLocal(true)}
+        />
+      );
   }
 
   return (
@@ -256,7 +289,6 @@ const App: React.FC = () => {
                 CINETRACK
             </h1>
             
-            {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-6 text-sm font-medium ml-4">
                 {(['all', 'watchlist', 'in-progress', 'watched'] as const).map(tab => (
                     <button 
@@ -278,7 +310,6 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-4">
-             {/* Search Input (Desktop) */}
             <div className={`hidden md:flex items-center bg-[#222] border border-transparent focus-within:border-gray-500 transition-colors px-3 py-2 rounded-full`}>
                 <Search size={18} className="text-gray-400" />
                 <input 
@@ -297,15 +328,26 @@ const App: React.FC = () => {
                 <Plus size={18} strokeWidth={3} /> <span className="hidden sm:inline">Add</span>
             </button>
 
+            {/* Mode Badges */}
             {isGuest && (
                 <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-yellow-500 bg-yellow-500/10 px-3 py-1.5 rounded-full border border-yellow-500/20">
-                    <UserCircle size={14} /> Guest Mode
+                    <UserCircle size={14} /> Guest
+                </div>
+            )}
+            {isPersonalLocal && (
+                 <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-orange-400 bg-orange-500/10 px-3 py-1.5 rounded-full border border-orange-500/20" title="Data saved locally because Firebase Auth is disabled">
+                    <CloudOff size={14} /> Local Owner
+                </div>
+            )}
+             {user && (
+                 <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-green-500 bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
+                    <Database size={14} /> Cloud Sync
                 </div>
             )}
 
             <button
                 onClick={handleLogout}
-                title={isGuest ? "Exit Guest Mode" : "Sign Out"}
+                title="Sign Out"
                 className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-colors"
             >
                 <LogOut size={20} />
@@ -316,7 +358,6 @@ const App: React.FC = () => {
       {/* --- Main Content --- */}
       <main className="flex-1 px-4 md:px-10 pt-28 pb-12 overflow-y-auto w-full max-w-[1920px] mx-auto">
         
-        {/* Mobile Filters */}
         <div className="md:hidden flex flex-col gap-4 mb-8">
              <div className="flex items-center bg-[#222] rounded-full px-4 py-2.5">
                 <Search size={18} className="text-gray-400" />
@@ -345,10 +386,7 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Large Mode Switcher & Counter */}
         <div className="flex flex-col md:flex-row justify-between items-end md:items-center mb-10 gap-4">
-            
-            {/* Prominent Mode Toggle */}
             <div className="flex bg-[#1a1a1a] p-1.5 rounded-xl border border-gray-800 w-full md:w-auto">
                 <button 
                     onClick={() => setActiveType('all')}
@@ -393,7 +431,6 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Content Render Logic */}
         {filteredLibrary.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-96 text-gray-500 bg-[#1a1a1a] rounded-3xl border border-dashed border-gray-800">
                 <div className="bg-[#222] p-6 rounded-full mb-4">
@@ -403,7 +440,9 @@ const App: React.FC = () => {
                     {libraryLoading ? 'Loading Library...' : 'No media found'}
                 </p>
                 <p className="text-sm mt-2 opacity-60">
-                    {libraryLoading ? 'Syncing with database...' : 'Try adjusting your filters or search query.'}
+                    {isPersonalLocal 
+                        ? 'Local "Owner" storage is empty. Add items to start.' 
+                        : 'Try adjusting your filters or search query.'}
                 </p>
                 {!libraryLoading && library.length === 0 && (
                     <button onClick={() => setIsAddModalOpen(true)} className="mt-6 text-black bg-white px-6 py-2 rounded-full font-bold hover:scale-105 transition-transform">
@@ -413,10 +452,8 @@ const App: React.FC = () => {
             </div>
         ) : (
              <>
-                {/* Specific Layout for Movies Mode */}
                 {activeType === 'movie' && movieSections ? (
                     <div className="space-y-16 animate-in fade-in duration-500">
-                        {/* Theatrical Section */}
                         {movieSections.theatrical.length > 0 && (
                             <section>
                                 <div className="flex items-center gap-3 mb-6 border-b border-gray-800 pb-4">
@@ -439,7 +476,6 @@ const App: React.FC = () => {
                             </section>
                         )}
 
-                        {/* VOD Section */}
                         {movieSections.vod.length > 0 && (
                              <section>
                                 <div className="flex items-center gap-3 mb-6 border-b border-gray-800 pb-4">
@@ -462,13 +498,11 @@ const App: React.FC = () => {
                             </section>
                         )}
 
-                        {/* Fallback if logic matches nothing (shouldn't happen if length > 0) */}
                          {movieSections.theatrical.length === 0 && movieSections.vod.length === 0 && (
                             <div className="text-center py-12 text-gray-500">No movies match the current filters.</div>
                         )}
                     </div>
                 ) : (
-                    /* Default Grid for All / Series */
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-x-6 gap-y-10 animate-in fade-in duration-500">
                         {filteredLibrary.map(item => (
                             <MediaCard 
@@ -484,7 +518,6 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* --- Modals --- */}
       <AddMediaModal 
         isOpen={isAddModalOpen} 
         onClose={() => setIsAddModalOpen(false)} 
