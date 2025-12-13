@@ -2,20 +2,14 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// ------------------------------------------------------------------
-// TODO: PASTE YOUR FIREBASE CONFIGURATION HERE
-// 1. Go to console.firebase.google.com
-// 2. Create a project
-// 3. Add a Web App
-// 4. Copy the config object below
-// ------------------------------------------------------------------
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY_HERE",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyArYktDktkUhvHJWFd10L5wu4wAJy_iO4Q",
+  authDomain: "cinetracker-d6456.firebaseapp.com",
+  projectId: "cinetracker-d6456",
+  storageBucket: "cinetracker-d6456.firebasestorage.app",
+  messagingSenderId: "699177659824",
+  appId: "1:699177659824:web:07cc51c502507902d0ba75",
+  measurementId: "G-CSVRLT8YJX"
 };
 
 // Initialize Firebase
