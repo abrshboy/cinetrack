@@ -1,5 +1,12 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -18,9 +25,33 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const googleProvider = new GoogleAuthProvider();
 
+// Personal Credentials
+const PERSONAL_EMAIL = "abrshethiodj44@gmail.com";
+const PERSONAL_PASS = "cineTrack7";
+
+export const signInPersonal = async () => {
+  try {
+    // Try to sign in first
+    await signInWithEmailAndPassword(auth, PERSONAL_EMAIL, PERSONAL_PASS);
+  } catch (error: any) {
+    console.log("Sign in failed, checking reason:", error.code);
+    
+    // If user doesn't exist, create it automatically
+    if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+      try {
+        await createUserWithEmailAndPassword(auth, PERSONAL_EMAIL, PERSONAL_PASS);
+      } catch (createError: any) {
+        // If creation fails (e.g. Email/Password provider not enabled), throw that error
+        throw createError;
+      }
+    } else {
+      // Throw other errors (network, operation-not-allowed, etc)
+      throw error;
+    }
+  }
+};
+
 export const signInWithGoogle = async () => {
-  // We throw the error here so the UI component can display a helpful message/modal
-  // instead of a generic alert.
   await signInWithPopup(auth, googleProvider);
 };
 
