@@ -1,20 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay } from 'lucide-react';
+import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2 } from 'lucide-react';
 import { MediaItem, SearchResult, WatchStatus } from './types';
 import MediaCard from './components/MediaCard';
 import AddMediaModal from './components/AddMediaModal';
 import EditMediaModal from './components/EditMediaModal';
+import LoginScreen from './components/LoginScreen';
 import { getMediaDetails } from './services/tmdbService';
-
-// Initial dummy data to populate if empty
-const INITIAL_DATA: MediaItem[] = [];
+import { auth, db, logout } from './services/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { collection, onSnapshot, query, setDoc, doc, deleteDoc } from 'firebase/firestore';
 
 const App: React.FC = () => {
   // --- State ---
-  const [library, setLibrary] = useState<MediaItem[]>(() => {
-    const saved = localStorage.getItem('cinetrack_library');
-    return saved ? JSON.parse(saved) : INITIAL_DATA;
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [library, setLibrary] = useState<MediaItem[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
 
   const [activeTab, setActiveTab] = useState<WatchStatus | 'all'>('all');
   const [activeType, setActiveType] = useState<'all' | 'movie' | 'series'>('all');
@@ -23,10 +24,40 @@ const App: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MediaItem | null>(null);
 
-  // --- Effects ---
+  // --- Auth & Data Sync Effects ---
   useEffect(() => {
-    localStorage.setItem('cinetrack_library', JSON.stringify(library));
-  }, [library]);
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+        setLibrary([]);
+        return;
+    }
+
+    setLibraryLoading(true);
+    // Reference: users/{userId}/library
+    const libraryRef = collection(db, 'users', user.uid, 'library');
+    const q = query(libraryRef);
+
+    const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
+        const items: MediaItem[] = [];
+        snapshot.forEach((doc) => {
+            items.push(doc.data() as MediaItem);
+        });
+        setLibrary(items);
+        setLibraryLoading(false);
+    }, (error) => {
+        console.error("Error fetching library:", error);
+        setLibraryLoading(false);
+    });
+
+    return () => unsubscribeSnapshot();
+  }, [user]);
 
   // --- Derived State (Filtering) ---
   const filteredLibrary = useMemo(() => {
@@ -54,11 +85,14 @@ const App: React.FC = () => {
 
   // --- Handlers ---
   const handleAddItem = async (result: SearchResult) => {
+    if (!user) return;
+
     // Fetch additional details (Runtime)
     const details = await getMediaDetails(result.tmdbId, result.type);
+    const id = crypto.randomUUID();
 
     const newItem: MediaItem = {
-      id: crypto.randomUUID(),
+      id,
       tmdbId: result.tmdbId,
       title: result.title,
       type: result.type,
@@ -74,39 +108,73 @@ const App: React.FC = () => {
       releaseSource: result.type === 'movie' ? 'Theater' : undefined, // Default to theater for movies
     };
     
-    setLibrary(prev => [newItem, ...prev]);
+    // Optimistic UI update (though snapshot is fast)
     setIsAddModalOpen(false);
-    
-    // Immediately open edit modal so user can configure Theater/VOD status
     setEditingItem(newItem);
-  };
 
-  const handleUpdateItem = (updated: MediaItem) => {
-    setLibrary(prev => prev.map(item => item.id === updated.id ? updated : item));
-    setEditingItem(null);
-  };
-
-  const handleDeleteItem = (id: string) => {
-    if (confirm('Are you sure you want to remove this from your library?')) {
-        setLibrary(prev => prev.filter(item => item.id !== id));
-        setEditingItem(null);
+    // Save to Firestore
+    try {
+        await setDoc(doc(db, 'users', user.uid, 'library', id), newItem);
+    } catch (e) {
+        console.error("Error adding document: ", e);
+        alert("Failed to save item to database.");
     }
   };
 
-  const handleQuickAction = (item: MediaItem, action: 'watched' | 'increment') => {
+  const handleUpdateItem = async (updated: MediaItem) => {
+    if (!user) return;
+    setEditingItem(null);
+    try {
+        await setDoc(doc(db, 'users', user.uid, 'library', updated.id), updated);
+    } catch (e) {
+        console.error("Error updating document: ", e);
+    }
+  };
+
+  const handleDeleteItem = async (id: string) => {
+    if (!user) return;
+    if (confirm('Are you sure you want to remove this from your library?')) {
+        setEditingItem(null);
+        try {
+            await deleteDoc(doc(db, 'users', user.uid, 'library', id));
+        } catch (e) {
+            console.error("Error deleting document: ", e);
+        }
+    }
+  };
+
+  const handleQuickAction = async (item: MediaItem, action: 'watched' | 'increment') => {
+    if (!user) return;
+
+    let updated = { ...item };
     if (action === 'watched') {
-        const updated = { ...item, status: 'watched' as WatchStatus };
-        handleUpdateItem(updated);
+        updated.status = 'watched' as WatchStatus;
     } else if (action === 'increment') {
         // Only for series in progress
         const currentEp = item.progress.episode || 1;
-        const updated = { 
-            ...item, 
-            progress: { ...item.progress, episode: currentEp + 1 }
-        };
-        handleUpdateItem(updated);
+        updated.progress = { ...item.progress, episode: currentEp + 1 };
+    }
+    
+    try {
+        await setDoc(doc(db, 'users', user.uid, 'library', item.id), updated);
+    } catch (e) {
+        console.error("Error updating quick action: ", e);
     }
   };
+
+  // --- Render Loading / Auth / App ---
+
+  if (authLoading) {
+      return (
+          <div className="min-h-screen bg-[#141414] flex items-center justify-center">
+              <Loader2 className="animate-spin text-red-600" size={48} />
+          </div>
+      );
+  }
+
+  if (!user) {
+      return <LoginScreen />;
+  }
 
   return (
     <div className="min-h-screen bg-[#141414] text-white flex flex-col font-sans">
@@ -157,7 +225,15 @@ const App: React.FC = () => {
                 onClick={() => setIsAddModalOpen(true)}
                 className="bg-white hover:bg-gray-200 text-black px-5 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-105"
             >
-                <Plus size={18} strokeWidth={3} /> <span className="hidden sm:inline">Add Media</span>
+                <Plus size={18} strokeWidth={3} /> <span className="hidden sm:inline">Add</span>
+            </button>
+
+            <button
+                onClick={logout}
+                title="Sign Out"
+                className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-colors"
+            >
+                <LogOut size={20} />
             </button>
         </div>
       </nav>
@@ -234,7 +310,11 @@ const App: React.FC = () => {
             </div>
 
             <div className="text-gray-400 text-sm font-medium px-2">
-                Showing {filteredLibrary.length} {filteredLibrary.length === 1 ? 'item' : 'items'}
+                {libraryLoading ? (
+                    <span className="flex items-center gap-2"><Loader2 className="animate-spin" size={14}/> Syncing...</span>
+                ) : (
+                    <span>Showing {filteredLibrary.length} {filteredLibrary.length === 1 ? 'item' : 'items'}</span>
+                )}
             </div>
         </div>
 
@@ -244,9 +324,13 @@ const App: React.FC = () => {
                 <div className="bg-[#222] p-6 rounded-full mb-4">
                     <ListFilter size={48} className="opacity-50" />
                 </div>
-                <p className="text-xl font-medium text-gray-300">No media found</p>
-                <p className="text-sm mt-2 opacity-60">Try adjusting your filters or search query.</p>
-                {library.length === 0 && (
+                <p className="text-xl font-medium text-gray-300">
+                    {libraryLoading ? 'Loading Library...' : 'No media found'}
+                </p>
+                <p className="text-sm mt-2 opacity-60">
+                    {libraryLoading ? 'Syncing with cloud database...' : 'Try adjusting your filters or search query.'}
+                </p>
+                {!libraryLoading && library.length === 0 && (
                     <button onClick={() => setIsAddModalOpen(true)} className="mt-6 text-black bg-white px-6 py-2 rounded-full font-bold hover:scale-105 transition-transform">
                         Add your first movie
                     </button>
