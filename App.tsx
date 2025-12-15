@@ -34,7 +34,6 @@ const App: React.FC = () => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthLoading(false);
-      // If user logs in via Firebase, ensure local modes are off
       if (currentUser) {
           setIsGuest(false);
           setIsPersonalLocal(false);
@@ -44,49 +43,35 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // 1. Personal Local Mode (Fallback for broken Firebase Config)
+    // 1. Personal Local Mode
     if (isPersonalLocal) {
         setLibraryLoading(true);
         const saved = localStorage.getItem('cine_library_personal');
         if (saved) {
-            try {
-                setLibrary(JSON.parse(saved));
-            } catch (e) {
-                console.error("Failed to parse personal library", e);
-                setLibrary([]);
-            }
-        } else {
-            setLibrary([]);
-        }
+            try { setLibrary(JSON.parse(saved)); } catch (e) { setLibrary([]); }
+        } else { setLibrary([]); }
         setLibraryLoading(false);
         return;
     }
 
-    // 2. Guest Mode Logic
+    // 2. Guest Mode
     if (isGuest) {
         setLibraryLoading(true);
         const saved = localStorage.getItem('cine_library');
         if (saved) {
-            try {
-                setLibrary(JSON.parse(saved));
-            } catch (e) {
-                console.error("Failed to parse guest library", e);
-                setLibrary([]);
-            }
-        } else {
-            setLibrary([]);
-        }
+            try { setLibrary(JSON.parse(saved)); } catch (e) { setLibrary([]); }
+        } else { setLibrary([]); }
         setLibraryLoading(false);
         return;
     }
 
-    // 3. Not logged in and not in any local mode -> clear
+    // 3. Not logged in
     if (!user) {
         setLibrary([]);
         return;
     }
 
-    // 4. Firebase Logic
+    // 4. Firebase Sync
     setLibraryLoading(true);
     const libraryRef = collection(db, 'users', user.uid, 'library');
     const q = query(libraryRef);
@@ -100,8 +85,6 @@ const App: React.FC = () => {
         setLibraryLoading(false);
     }, (error) => {
         console.error("Error fetching library:", error);
-        // If Firebase fails to read (e.g. permission denied or config error), maybe fallback?
-        // For now, just stop loading.
         setLibraryLoading(false);
     });
 
@@ -120,6 +103,7 @@ const App: React.FC = () => {
       .sort((a, b) => b.addedAt - a.addedAt);
   }, [library, activeTab, activeType, searchQuery]);
 
+  // Calculate sections for Movies view
   const movieSections = useMemo(() => {
     if (activeType !== 'movie') return null;
     const theatrical = filteredLibrary.filter(item => !item.releaseSource || item.releaseSource === 'Theater');
@@ -127,7 +111,6 @@ const App: React.FC = () => {
     return { theatrical, vod };
   }, [filteredLibrary, activeType]);
 
-  // --- Helpers ---
   const saveToLocal = (items: MediaItem[], key: string) => {
       setLibrary(items);
       localStorage.setItem(key, JSON.stringify(items));
@@ -137,46 +120,43 @@ const App: React.FC = () => {
   const handleAddItem = async (result: SearchResult) => {
     if (!user && !isGuest && !isPersonalLocal) return;
 
-    const details = await getMediaDetails(result.tmdbId, result.type);
-    const id = crypto.randomUUID();
-
-    const newItem: MediaItem = {
-      id,
-      tmdbId: result.tmdbId,
-      title: result.title,
-      type: result.type,
-      status: 'watchlist',
-      year: result.year,
-      description: result.description,
-      posterPath: result.posterPath,
-      backdropPath: result.backdropPath,
-      voteAverage: result.voteAverage,
-      runtime: details.runtime,
-      addedAt: Date.now(),
-      progress: { season: 1, episode: 1 },
-      releaseSource: result.type === 'movie' ? 'Theater' : undefined,
-    };
-    
-    setIsAddModalOpen(false);
-    setEditingItem(newItem);
-
-    // LOGIC ROUTING
-    if (isPersonalLocal) {
-        saveToLocal([newItem, ...library], 'cine_library_personal');
-        return;
-    }
-
-    if (isGuest) {
-        saveToLocal([newItem, ...library], 'cine_library');
-        return;
-    }
-
-    // FIREBASE
     try {
-        await setDoc(doc(db, 'users', user!.uid, 'library', id), newItem);
+        // Fetch details safely. If it fails, it returns { runtime: 0 }
+        const details = await getMediaDetails(result.tmdbId, result.type);
+        const id = crypto.randomUUID();
+
+        const newItem: MediaItem = {
+            id,
+            tmdbId: result.tmdbId,
+            title: result.title,
+            type: result.type, // 'movie' or 'series'
+            status: 'watchlist',
+            year: result.year,
+            description: result.description,
+            posterPath: result.posterPath,
+            backdropPath: result.backdropPath,
+            voteAverage: result.voteAverage,
+            runtime: details.runtime,
+            addedAt: Date.now(),
+            progress: { season: 1, episode: 1 },
+            // Default to Theater for movies, undefined for Series
+            releaseSource: result.type === 'movie' ? 'Theater' : undefined,
+        };
+        
+        setIsAddModalOpen(false);
+        setEditingItem(newItem);
+
+        // Save based on mode
+        if (isPersonalLocal) {
+            saveToLocal([newItem, ...library], 'cine_library_personal');
+        } else if (isGuest) {
+            saveToLocal([newItem, ...library], 'cine_library');
+        } else if (user) {
+            await setDoc(doc(db, 'users', user.uid, 'library', id), newItem);
+        }
     } catch (e) {
-        console.error("Error adding document: ", e);
-        alert("Failed to save item. Check internet or permissions.");
+        console.error("Error adding item:", e);
+        alert("Could not add item. Please try again.");
     }
   };
 
@@ -186,40 +166,24 @@ const App: React.FC = () => {
 
     if (isPersonalLocal) {
         saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library_personal');
-        return;
-    }
-
-    if (isGuest) {
+    } else if (isGuest) {
         saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library');
-        return;
-    }
-
-    try {
-        await setDoc(doc(db, 'users', user!.uid, 'library', updated.id), updated);
-    } catch (e) {
-        console.error("Error updating document: ", e);
+    } else if (user) {
+        await setDoc(doc(db, 'users', user.uid, 'library', updated.id), updated);
     }
   };
 
   const handleDeleteItem = async (id: string) => {
     if (!user && !isGuest && !isPersonalLocal) return;
-    if (confirm('Are you sure you want to remove this from your library?')) {
+    if (confirm('Remove this from your library?')) {
         setEditingItem(null);
 
         if (isPersonalLocal) {
             saveToLocal(library.filter(item => item.id !== id), 'cine_library_personal');
-            return;
-        }
-
-        if (isGuest) {
+        } else if (isGuest) {
             saveToLocal(library.filter(item => item.id !== id), 'cine_library');
-            return;
-        }
-
-        try {
-            await deleteDoc(doc(db, 'users', user!.uid, 'library', id));
-        } catch (e) {
-            console.error("Error deleting document: ", e);
+        } else if (user) {
+            await deleteDoc(doc(db, 'users', user.uid, 'library', id));
         }
     }
   };
@@ -237,18 +201,10 @@ const App: React.FC = () => {
     
     if (isPersonalLocal) {
         saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library_personal');
-        return;
-    }
-
-    if (isGuest) {
+    } else if (isGuest) {
         saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library');
-        return;
-    }
-
-    try {
-        await setDoc(doc(db, 'users', user!.uid, 'library', item.id), updated);
-    } catch (e) {
-        console.error("Error updating quick action: ", e);
+    } else if (user) {
+        await setDoc(doc(db, 'users', user.uid, 'library', item.id), updated);
     }
   };
 
@@ -258,8 +214,6 @@ const App: React.FC = () => {
       setLibrary([]);
       if (user) logout();
   };
-
-  // --- Render ---
 
   if (authLoading) {
       return (
@@ -279,13 +233,13 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#141414] text-white flex flex-col font-sans">
+    <div className="min-h-screen bg-[#141414] text-white flex flex-col font-sans pb-safe">
       
       {/* --- Navbar --- */}
-      <nav className="fixed top-0 left-0 right-0 z-40 bg-gradient-to-b from-black/90 to-black/0 h-24 px-6 md:px-10 flex items-center justify-between backdrop-blur-md bg-black/60 border-b border-white/5">
-        <div className="flex items-center gap-10">
-            <h1 className="text-3xl font-bold text-red-600 tracking-tighter cursor-pointer flex items-center gap-2" onClick={() => {setActiveTab('all'); setActiveType('all')}}>
-                <Clapperboard size={28} />
+      <nav className="fixed top-0 left-0 right-0 z-40 h-20 pt-safe px-4 md:px-10 flex items-center justify-between backdrop-blur-md bg-black/80 border-b border-white/5 shadow-lg">
+        <div className="flex items-center gap-6">
+            <h1 className="text-2xl md:text-3xl font-bold text-red-600 tracking-tighter cursor-pointer flex items-center gap-2" onClick={() => {setActiveTab('all'); setActiveType('all')}}>
+                <Clapperboard size={26} className="text-red-600" />
                 CINETRACK
             </h1>
             
@@ -309,45 +263,28 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        <div className="flex items-center gap-4">
-            <div className={`hidden md:flex items-center bg-[#222] border border-transparent focus-within:border-gray-500 transition-colors px-3 py-2 rounded-full`}>
-                <Search size={18} className="text-gray-400" />
+        <div className="flex items-center gap-3">
+            <div className={`hidden md:flex items-center bg-[#222] border border-transparent focus-within:border-gray-500 transition-colors px-3 py-1.5 rounded-full`}>
+                <Search size={16} className="text-gray-400" />
                 <input 
-                    type="text" 
-                    placeholder="Search library..." 
+                    type="search" 
+                    placeholder="Filter..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-transparent border-none focus:outline-none text-sm px-2 w-48 text-white placeholder-gray-500"
+                    className="bg-transparent border-none focus:outline-none text-sm px-2 w-32 lg:w-48 text-white placeholder-gray-500"
                 />
             </div>
             
             <button 
                 onClick={() => setIsAddModalOpen(true)}
-                className="bg-white hover:bg-gray-200 text-black px-5 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-105"
+                className="bg-white hover:bg-gray-200 active:bg-gray-300 text-black px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 shadow-lg active:scale-95"
             >
                 <Plus size={18} strokeWidth={3} /> <span className="hidden sm:inline">Add</span>
             </button>
 
-            {/* Mode Badges */}
-            {isGuest && (
-                <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-yellow-500 bg-yellow-500/10 px-3 py-1.5 rounded-full border border-yellow-500/20">
-                    <UserCircle size={14} /> Guest
-                </div>
-            )}
-            {isPersonalLocal && (
-                 <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-orange-400 bg-orange-500/10 px-3 py-1.5 rounded-full border border-orange-500/20" title="Data saved locally because Firebase Auth is disabled">
-                    <CloudOff size={14} /> Local Owner
-                </div>
-            )}
-             {user && (
-                 <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-green-500 bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20">
-                    <Database size={14} /> Cloud Sync
-                </div>
-            )}
-
+            {/* Mobile Logout / Status */}
             <button
                 onClick={handleLogout}
-                title="Sign Out"
                 className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-colors"
             >
                 <LogOut size={20} />
@@ -356,25 +293,26 @@ const App: React.FC = () => {
       </nav>
 
       {/* --- Main Content --- */}
-      <main className="flex-1 px-4 md:px-10 pt-28 pb-12 overflow-y-auto w-full max-w-[1920px] mx-auto">
+      <main className="flex-1 px-4 md:px-10 pt-24 md:pt-28 pb-12 w-full max-w-[1920px] mx-auto">
         
-        <div className="md:hidden flex flex-col gap-4 mb-8">
-             <div className="flex items-center bg-[#222] rounded-full px-4 py-2.5">
+        {/* Mobile Filter Bar */}
+        <div className="md:hidden flex flex-col gap-3 mb-6">
+             <div className="flex items-center bg-[#222] rounded-xl px-4 py-3">
                 <Search size={18} className="text-gray-400" />
                 <input 
-                    type="text" 
+                    type="search" 
                     placeholder="Search library..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-transparent border-none focus:outline-none text-sm px-3 w-full text-white"
+                    className="bg-transparent border-none focus:outline-none text-base px-3 w-full text-white"
                 />
             </div>
-            <div className="flex overflow-x-auto gap-2 pb-2 hide-scrollbar">
+            <div className="flex overflow-x-auto gap-2 pb-1 hide-scrollbar -mx-4 px-4">
                 {(['all', 'watchlist', 'in-progress', 'watched'] as const).map(tab => (
                     <button 
                         key={tab}
                         onClick={() => setActiveTab(tab)}
-                        className={`whitespace-nowrap px-5 py-2 rounded-full text-sm font-semibold border transition-all ${
+                        className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
                             activeTab === tab 
                             ? 'bg-red-600 text-white border-red-600 shadow-md' 
                             : 'bg-[#222] text-gray-400 border-transparent'
@@ -386,8 +324,9 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        <div className="flex flex-col md:flex-row justify-between items-end md:items-center mb-10 gap-4">
-            <div className="flex bg-[#1a1a1a] p-1.5 rounded-xl border border-gray-800 w-full md:w-auto">
+        {/* Type Toggles & Stats */}
+        <div className="flex flex-col md:flex-row justify-between items-end md:items-center mb-8 gap-4">
+            <div className="flex bg-[#1a1a1a] p-1 rounded-xl border border-gray-800 w-full md:w-auto">
                 <button 
                     onClick={() => setActiveType('all')}
                     className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all duration-300 ${
@@ -396,9 +335,8 @@ const App: React.FC = () => {
                         : 'text-gray-400 hover:text-white hover:bg-[#252525]'
                     }`}
                 >
-                    <LayoutGrid size={18} /> All Media
+                    <LayoutGrid size={18} /> All
                 </button>
-                <div className="w-px bg-gray-800 my-2 mx-1"></div>
                 <button 
                     onClick={() => setActiveType('movie')}
                     className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all duration-300 ${
@@ -409,7 +347,6 @@ const App: React.FC = () => {
                 >
                     <Film size={18} /> Movies
                 </button>
-                <div className="w-px bg-gray-800 my-2 mx-1"></div>
                 <button 
                     onClick={() => setActiveType('series')}
                     className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all duration-300 ${
@@ -418,52 +355,58 @@ const App: React.FC = () => {
                         : 'text-gray-400 hover:text-white hover:bg-[#252525]'
                     }`}
                 >
-                    <Tv size={18} /> TV Series
+                    <Tv size={18} /> TV
                 </button>
             </div>
 
-            <div className="text-gray-400 text-sm font-medium px-2">
+            <div className="text-gray-400 text-xs font-medium px-2">
                 {libraryLoading ? (
-                    <span className="flex items-center gap-2"><Loader2 className="animate-spin" size={14}/> Syncing...</span>
+                    <span className="flex items-center gap-2"><Loader2 className="animate-spin" size={12}/> Syncing...</span>
                 ) : (
-                    <span>Showing {filteredLibrary.length} {filteredLibrary.length === 1 ? 'item' : 'items'}</span>
+                    <span>{filteredLibrary.length} items</span>
                 )}
             </div>
         </div>
 
+        {/* Content Grid */}
         {filteredLibrary.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-96 text-gray-500 bg-[#1a1a1a] rounded-3xl border border-dashed border-gray-800">
+            <div className="flex flex-col items-center justify-center h-[50vh] text-gray-500 bg-[#1a1a1a] rounded-3xl border border-dashed border-gray-800 mx-auto max-w-2xl p-6 text-center">
                 <div className="bg-[#222] p-6 rounded-full mb-4">
                     <ListFilter size={48} className="opacity-50" />
                 </div>
                 <p className="text-xl font-medium text-gray-300">
-                    {libraryLoading ? 'Loading Library...' : 'No media found'}
+                    {libraryLoading ? 'Loading Library...' : 'Nothing here yet'}
                 </p>
                 <p className="text-sm mt-2 opacity-60">
-                    {isPersonalLocal 
-                        ? 'Local "Owner" storage is empty. Add items to start.' 
-                        : 'Try adjusting your filters or search query.'}
+                    Start by adding movies or TV shows to your collection.
                 </p>
                 {!libraryLoading && library.length === 0 && (
-                    <button onClick={() => setIsAddModalOpen(true)} className="mt-6 text-black bg-white px-6 py-2 rounded-full font-bold hover:scale-105 transition-transform">
-                        Add your first movie
+                    <button onClick={() => setIsAddModalOpen(true)} className="mt-6 text-black bg-white px-8 py-3 rounded-full font-bold hover:scale-105 active:scale-95 transition-all shadow-xl">
+                        Add Content
                     </button>
                 )}
             </div>
         ) : (
              <>
+                {/* MOVIE SPLIT VIEW: Specifically requested to show distinct sections */}
                 {activeType === 'movie' && movieSections ? (
-                    <div className="space-y-16 animate-in fade-in duration-500">
-                        {movieSections.theatrical.length > 0 && (
-                            <section>
-                                <div className="flex items-center gap-3 mb-6 border-b border-gray-800 pb-4">
-                                    <div className="p-2 bg-blue-900/30 text-blue-400 rounded-lg">
-                                        <Ticket size={24} />
-                                    </div>
-                                    <h2 className="text-2xl font-bold text-white">Theatrical Releases</h2>
-                                    <span className="text-sm font-medium text-gray-500 bg-gray-900 px-2 py-1 rounded-md">{movieSections.theatrical.length}</span>
+                    <div className="space-y-12 animate-in fade-in duration-500">
+                        
+                        {/* THEATRICAL SECTION */}
+                        <section className="bg-[#1a1a1a]/30 p-4 rounded-2xl border border-white/5">
+                             <div className="flex items-center gap-3 mb-6 pb-2 border-b border-white/5">
+                                <div className="p-2 bg-blue-900/30 text-blue-400 rounded-lg">
+                                    <Ticket size={24} />
                                 </div>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-x-6 gap-y-10">
+                                <div>
+                                    <h2 className="text-xl font-bold text-white">Theatrical / Standard</h2>
+                                    <p className="text-xs text-gray-500">Movies released in theaters</p>
+                                </div>
+                                <span className="ml-auto text-sm font-medium text-gray-400 bg-white/5 px-2 py-1 rounded-md">{movieSections.theatrical.length}</span>
+                            </div>
+                            
+                            {movieSections.theatrical.length > 0 ? (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 md:gap-6">
                                     {movieSections.theatrical.map(item => (
                                         <MediaCard 
                                             key={item.id} 
@@ -473,19 +416,26 @@ const App: React.FC = () => {
                                         />
                                     ))}
                                 </div>
-                            </section>
-                        )}
+                            ) : (
+                                <div className="text-center py-8 text-gray-600 text-sm italic">No theatrical movies found.</div>
+                            )}
+                        </section>
 
-                        {movieSections.vod.length > 0 && (
-                             <section>
-                                <div className="flex items-center gap-3 mb-6 border-b border-gray-800 pb-4">
-                                     <div className="p-2 bg-purple-900/30 text-purple-400 rounded-lg">
-                                        <MonitorPlay size={24} />
-                                    </div>
-                                    <h2 className="text-2xl font-bold text-white">Streaming Originals</h2>
-                                    <span className="text-sm font-medium text-gray-500 bg-gray-900 px-2 py-1 rounded-md">{movieSections.vod.length}</span>
+                        {/* VOD SECTION */}
+                        <section className="bg-[#1a1a1a]/30 p-4 rounded-2xl border border-white/5">
+                             <div className="flex items-center gap-3 mb-6 pb-2 border-b border-white/5">
+                                 <div className="p-2 bg-purple-900/30 text-purple-400 rounded-lg">
+                                    <MonitorPlay size={24} />
                                 </div>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-x-6 gap-y-10">
+                                <div>
+                                    <h2 className="text-xl font-bold text-white">Streaming Originals</h2>
+                                    <p className="text-xs text-gray-500">Netflix, Amazon, Hulu, etc.</p>
+                                </div>
+                                <span className="ml-auto text-sm font-medium text-gray-400 bg-white/5 px-2 py-1 rounded-md">{movieSections.vod.length}</span>
+                            </div>
+
+                            {movieSections.vod.length > 0 ? (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 md:gap-6">
                                     {movieSections.vod.map(item => (
                                         <MediaCard 
                                             key={item.id} 
@@ -495,15 +445,14 @@ const App: React.FC = () => {
                                         />
                                     ))}
                                 </div>
-                            </section>
-                        )}
-
-                         {movieSections.theatrical.length === 0 && movieSections.vod.length === 0 && (
-                            <div className="text-center py-12 text-gray-500">No movies match the current filters.</div>
-                        )}
+                            ) : (
+                                <div className="text-center py-8 text-gray-600 text-sm italic">No streaming originals found. Edit a movie to change its source.</div>
+                            )}
+                        </section>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-x-6 gap-y-10 animate-in fade-in duration-500">
+                    // STANDARD GRID FOR ALL / SERIES
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 md:gap-6 animate-in fade-in duration-500">
                         {filteredLibrary.map(item => (
                             <MediaCard 
                                 key={item.id} 
