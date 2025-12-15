@@ -14,8 +14,8 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, onClick, onQuickAction }) =
   
   const getStatusColor = () => {
     switch (item.status) {
-      case 'watched': return 'bg-green-600';
-      case 'in-progress': return 'bg-blue-600';
+      case 'watched': return 'bg-green-500';
+      case 'in-progress': return 'bg-blue-500';
       default: return 'bg-gray-600';
     }
   };
@@ -55,11 +55,11 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, onClick, onQuickAction }) =
 
   return (
     <div 
-      className="group flex flex-col gap-3 cursor-pointer w-full"
+      className="group flex flex-col gap-3 cursor-pointer w-full touch-manipulation active:scale-95 transition-transform duration-200"
       onClick={() => onClick(item)}
     >
-      {/* Poster Container - Clean, no text overlay */}
-      <div className="relative aspect-[2/3] w-full rounded-lg overflow-hidden bg-gray-900 shadow-md transition-all duration-300 ease-in-out group-hover:scale-[1.02] group-hover:shadow-xl group-hover:ring-2 group-hover:ring-white/20">
+      {/* Poster Container - iOS rounded corners */}
+      <div className="relative aspect-[2/3] w-full rounded-xl overflow-hidden bg-[#1c1c1e] shadow-lg ring-1 ring-white/5 group-hover:ring-white/20">
         
         {/* Image or Gradient Fallback */}
         {posterUrl ? (
@@ -78,93 +78,58 @@ const MediaCard: React.FC<MediaCardProps> = ({ item, onClick, onQuickAction }) =
         {/* VOD Provider Badge (Top Right) */}
         {isMovie && item.releaseSource === 'VOD' && (
             <div className="absolute top-2 right-2 z-10">
-                <div className="bg-black/70 backdrop-blur-md text-[10px] font-bold text-white px-2 py-1 rounded border border-white/20 shadow-lg flex items-center gap-1">
-                    <MonitorPlay size={10} className="text-purple-400"/>
+                <div className="bg-black/60 backdrop-blur-md text-[9px] font-bold text-white px-2 py-0.5 rounded-full border border-white/10 shadow-sm flex items-center gap-1">
+                    <MonitorPlay size={9} className="text-purple-400"/>
                     {item.vodProvider || 'VOD'}
                 </div>
             </div>
         )}
 
         {/* Status Bar (Thin line at bottom) */}
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800/50">
-             <div 
-                 className={`h-full ${getStatusColor()}`} 
-                 style={{ width: item.status === 'watched' ? '100%' : item.status === 'in-progress' ? '50%' : '0%'}} 
-             />
-        </div>
+        {item.status !== 'watchlist' && (
+            <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40 backdrop-blur-sm">
+                <div 
+                    className={`h-full ${getStatusColor()} shadow-[0_0_10px_currentColor]`} 
+                    style={{ width: item.status === 'watched' ? '100%' : '50%'}} 
+                />
+            </div>
+        )}
 
-        {/* Hover Overlay Actions */}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-3 backdrop-blur-[2px]">
-            <button className="p-3 bg-white/90 rounded-full text-black hover:bg-white hover:scale-110 transition-all shadow-lg">
-                <MoreVertical size={20} fill="currentColor" />
-            </button>
-            {item.status !== 'watched' && (
-                <button 
-                    className="p-3 bg-red-600/90 rounded-full text-white hover:bg-red-600 hover:scale-110 transition-all shadow-lg"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onQuickAction?.(item, 'watched');
-                    }}
-                    title="Mark as Watched"
-                >
-                    <Check size={20} strokeWidth={3} />
-                </button>
-            )}
-             {isSeries && item.status === 'in-progress' && (
-                <button 
-                    className="p-3 bg-blue-600/90 rounded-full text-white hover:bg-blue-600 hover:scale-110 transition-all shadow-lg"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onQuickAction?.(item, 'increment');
-                    }}
-                    title="Next Episode"
-                >
-                    <Play size={20} fill="currentColor" />
-                </button>
-            )}
-        </div>
+        {/* Series Progress Badge overlay */}
+        {isSeries && item.status === 'in-progress' && (
+             <div className="absolute bottom-2 right-2 z-10">
+                 <div className="bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-md shadow-lg border border-blue-400/30">
+                     S{item.progress.season} E{item.progress.episode}
+                 </div>
+             </div>
+        )}
       </div>
 
       {/* Info Below Card */}
-      <div className="flex flex-col gap-1 px-1">
+      <div className="flex flex-col gap-0.5 px-0.5">
         <div className="flex justify-between items-start gap-2">
-            <h3 className="font-semibold text-white leading-tight line-clamp-1 group-hover:text-red-500 transition-colors" title={item.title}>
+            <h3 className="font-semibold text-white text-[15px] leading-tight line-clamp-1" title={item.title}>
                 {item.title}
             </h3>
             
-            {/* Show Personal Rating if exists, otherwise TMDB rating */}
+            {/* Rating */}
             {isMovie && item.status === 'watched' && item.personalRating ? (
-                 <div className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 uppercase ${getPersonalRatingColor(item.personalRating)}`}>
-                    {item.personalRating}
-                 </div>
+                 <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
+                     item.personalRating === 'Excellent' ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 
+                     item.personalRating === 'Good' ? 'bg-blue-500' : 'bg-gray-500'
+                 }`} />
             ) : (
                 item.voteAverage !== undefined && item.voteAverage > 0 && (
-                    <div className="flex items-center gap-1 text-[10px] font-bold text-yellow-500 bg-yellow-500/10 px-1.5 py-0.5 rounded flex-shrink-0">
-                        <Star size={10} fill="currentColor" />
+                    <div className="flex items-center gap-1 text-[11px] font-medium text-gray-400">
+                        <Star size={10} className="text-yellow-500 fill-yellow-500" />
                         <span>{item.voteAverage.toFixed(1)}</span>
                     </div>
                 )
             )}
         </div>
         
-        <div className="flex items-center text-xs text-gray-500 font-medium gap-2">
+        <div className="flex items-center text-[13px] text-gray-500 font-normal">
              <span>{item.year || 'N/A'}</span>
-             {item.runtime ? (
-                 <>
-                    <span className="text-gray-700">•</span>
-                    <span>{formatRuntime(item.runtime)}</span>
-                 </>
-             ) : null}
-             
-             {/* Show Series specific info if watching */}
-             {isSeries && item.status === 'in-progress' && (
-                 <>
-                    <span className="text-gray-700">•</span>
-                    <span className="text-blue-500 flex items-center gap-1">
-                        S{item.progress.season} E{item.progress.episode}
-                    </span>
-                 </>
-             )}
         </div>
       </div>
     </div>

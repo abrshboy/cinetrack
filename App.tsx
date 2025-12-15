@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2, UserCircle, Database, CloudOff } from 'lucide-react';
+import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2, UserCircle, Database, CloudOff, Play, CheckCircle2 } from 'lucide-react';
 import { MediaItem, SearchResult, WatchStatus } from './types';
 import MediaCard from './components/MediaCard';
 import AddMediaModal from './components/AddMediaModal';
@@ -105,7 +105,10 @@ const App: React.FC = () => {
 
   // Calculate sections for Movies view
   const movieSections = useMemo(() => {
+    // We only calculate sections if we are specifically in the 'movie' tab
     if (activeType !== 'movie') return null;
+    
+    // Items with explicit 'Theater' or undefined (legacy/default) go to Theatrical
     const theatrical = filteredLibrary.filter(item => !item.releaseSource || item.releaseSource === 'Theater');
     const vod = filteredLibrary.filter(item => item.releaseSource === 'VOD');
     return { theatrical, vod };
@@ -116,14 +119,27 @@ const App: React.FC = () => {
       localStorage.setItem(key, JSON.stringify(items));
   };
 
+  // Helper to remove undefined values which Firebase hates
+  const sanitizeForFirestore = (data: any) => {
+    return JSON.parse(JSON.stringify(data));
+  };
+
   // --- Handlers ---
+  const generateId = () => {
+    // Fallback for environments where crypto.randomUUID is not available (e.g. non-secure contexts on mobile)
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  };
+
   const handleAddItem = async (result: SearchResult) => {
     if (!user && !isGuest && !isPersonalLocal) return;
 
     try {
-        // Fetch details safely. If it fails, it returns { runtime: 0 }
+        // Fetch details safely.
         const details = await getMediaDetails(result.tmdbId, result.type);
-        const id = crypto.randomUUID();
+        const id = generateId();
 
         const newItem: MediaItem = {
             id,
@@ -139,7 +155,7 @@ const App: React.FC = () => {
             runtime: details.runtime,
             addedAt: Date.now(),
             progress: { season: 1, episode: 1 },
-            // Default to Theater for movies, undefined for Series
+            // Only set releaseSource for movies. Series is undefined.
             releaseSource: result.type === 'movie' ? 'Theater' : undefined,
         };
         
@@ -152,8 +168,16 @@ const App: React.FC = () => {
         } else if (isGuest) {
             saveToLocal([newItem, ...library], 'cine_library');
         } else if (user) {
-            await setDoc(doc(db, 'users', user.uid, 'library', id), newItem);
+            await setDoc(doc(db, 'users', user.uid, 'library', id), sanitizeForFirestore(newItem));
         }
+
+        // UX: If adding a Series while looking at Movies, switch to Series tab so user sees it
+        if (activeType === 'movie' && result.type === 'series') {
+            setActiveType('series');
+        } else if (activeType === 'series' && result.type === 'movie') {
+            setActiveType('movie');
+        }
+
     } catch (e) {
         console.error("Error adding item:", e);
         alert("Could not add item. Please try again.");
@@ -169,15 +193,17 @@ const App: React.FC = () => {
     } else if (isGuest) {
         saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library');
     } else if (user) {
-        await setDoc(doc(db, 'users', user.uid, 'library', updated.id), updated);
+        await setDoc(doc(db, 'users', user.uid, 'library', updated.id), sanitizeForFirestore(updated));
     }
   };
 
   const handleDeleteItem = async (id: string) => {
     if (!user && !isGuest && !isPersonalLocal) return;
-    if (confirm('Remove this from your library?')) {
-        setEditingItem(null);
+    
+    // Optimistically close modal to feel snappy
+    setEditingItem(null);
 
+    try {
         if (isPersonalLocal) {
             saveToLocal(library.filter(item => item.id !== id), 'cine_library_personal');
         } else if (isGuest) {
@@ -185,6 +211,9 @@ const App: React.FC = () => {
         } else if (user) {
             await deleteDoc(doc(db, 'users', user.uid, 'library', id));
         }
+    } catch (error) {
+        console.error("Error deleting item:", error);
+        alert("Failed to delete item. It may have already been removed.");
     }
   };
 
@@ -204,7 +233,7 @@ const App: React.FC = () => {
     } else if (isGuest) {
         saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library');
     } else if (user) {
-        await setDoc(doc(db, 'users', user.uid, 'library', item.id), updated);
+        await setDoc(doc(db, 'users', user.uid, 'library', item.id), sanitizeForFirestore(updated));
     }
   };
 
@@ -217,8 +246,8 @@ const App: React.FC = () => {
 
   if (authLoading) {
       return (
-          <div className="min-h-screen bg-[#141414] flex items-center justify-center">
-              <Loader2 className="animate-spin text-red-600" size={48} />
+          <div className="min-h-screen bg-black flex items-center justify-center">
+              <Loader2 className="animate-spin text-white" size={48} />
           </div>
       );
   }
@@ -233,180 +262,171 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#141414] text-white flex flex-col font-sans pb-safe">
+    <div className="min-h-screen bg-black text-white flex flex-col font-sans pb-safe">
       
-      {/* --- Navbar --- */}
-      <nav className="fixed top-0 left-0 right-0 z-40 h-20 pt-safe px-4 md:px-10 flex items-center justify-between backdrop-blur-md bg-black/80 border-b border-white/5 shadow-lg">
-        <div className="flex items-center gap-6">
-            <h1 className="text-2xl md:text-3xl font-bold text-red-600 tracking-tighter cursor-pointer flex items-center gap-2" onClick={() => {setActiveTab('all'); setActiveType('all')}}>
-                <Clapperboard size={26} className="text-red-600" />
-                CINETRACK
+      {/* --- Header / Navigation --- */}
+      <nav className="fixed top-0 left-0 right-0 z-40 pt-safe px-4 md:px-10 flex flex-col backdrop-blur-xl bg-black/70 border-b border-white/5">
+        <div className="h-16 flex items-center justify-between">
+            {/* Logo */}
+            <h1 className="text-2xl font-bold tracking-tight cursor-pointer flex items-center gap-2" onClick={() => {setActiveTab('all'); setActiveType('all')}}>
+                <span className="text-red-600">
+                    <Clapperboard size={24} fill="currentColor" strokeWidth={0} />
+                </span>
+                <span>CineTrack</span>
             </h1>
-            
-            <div className="hidden md:flex items-center gap-6 text-sm font-medium ml-4">
-                {(['all', 'watchlist', 'in-progress', 'watched'] as const).map(tab => (
+
+            {/* Actions */}
+            <div className="flex items-center gap-3">
+                 {/* Desktop Search */}
+                <div className={`hidden md:flex items-center bg-[#1c1c1e] rounded-xl px-3 py-1.5`}>
+                    <Search size={16} className="text-gray-400" />
+                    <input 
+                        type="search" 
+                        placeholder="Filter..." 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="bg-transparent border-none focus:outline-none text-sm px-2 w-48 text-white placeholder-gray-500"
+                    />
+                </div>
+                
+                <button 
+                    onClick={() => setIsAddModalOpen(true)}
+                    className="bg-white text-black px-4 py-1.5 rounded-full text-sm font-bold active:scale-95 transition-all flex items-center gap-1 shadow-lg"
+                >
+                    <Plus size={18} strokeWidth={3} /> Add
+                </button>
+
+                <button
+                    onClick={handleLogout}
+                    className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white bg-[#1c1c1e] rounded-full transition-colors active:scale-95"
+                >
+                    <LogOut size={16} />
+                </button>
+            </div>
+        </div>
+
+        {/* Desktop Tab Bar (Integrated into header) */}
+        <div className="hidden md:flex items-center gap-8 pb-3 text-sm font-medium">
+             {(['all', 'watchlist', 'in-progress', 'watched'] as const).map(tab => (
                     <button 
                         key={tab}
                         onClick={() => setActiveTab(tab)}
-                        className={`transition-all duration-200 relative py-2 ${
+                        className={`transition-all duration-200 relative py-1 ${
                             activeTab === tab 
-                            ? 'text-white font-bold' 
-                            : 'text-gray-400 hover:text-gray-200'
+                            ? 'text-white' 
+                            : 'text-gray-500 hover:text-gray-300'
                         }`}
                     >
                         {tab === 'all' ? 'Home' : tab === 'in-progress' ? 'Watching' : tab.charAt(0).toUpperCase() + tab.slice(1)}
                         {activeTab === tab && (
-                            <div className="absolute -bottom-1 left-0 right-0 h-0.5 bg-red-600 rounded-full shadow-[0_0_8px_rgba(220,38,38,0.8)]"></div>
+                            <div className="absolute -bottom-3.5 left-0 right-0 h-[3px] bg-red-600 rounded-t-full shadow-[0_-2px_8px_rgba(220,38,38,0.5)]"></div>
                         )}
                     </button>
-                ))}
-            </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-            <div className={`hidden md:flex items-center bg-[#222] border border-transparent focus-within:border-gray-500 transition-colors px-3 py-1.5 rounded-full`}>
-                <Search size={16} className="text-gray-400" />
-                <input 
-                    type="search" 
-                    placeholder="Filter..." 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-transparent border-none focus:outline-none text-sm px-2 w-32 lg:w-48 text-white placeholder-gray-500"
-                />
-            </div>
-            
-            <button 
-                onClick={() => setIsAddModalOpen(true)}
-                className="bg-white hover:bg-gray-200 active:bg-gray-300 text-black px-4 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 shadow-lg active:scale-95"
-            >
-                <Plus size={18} strokeWidth={3} /> <span className="hidden sm:inline">Add</span>
-            </button>
-
-            {/* Mobile Logout / Status */}
-            <button
-                onClick={handleLogout}
-                className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-full transition-colors"
-            >
-                <LogOut size={20} />
-            </button>
+            ))}
         </div>
       </nav>
 
       {/* --- Main Content --- */}
-      <main className="flex-1 px-4 md:px-10 pt-24 md:pt-28 pb-12 w-full max-w-[1920px] mx-auto">
+      <main className="flex-1 px-4 md:px-10 pt-[100px] md:pt-[130px] pb-24 w-full max-w-[1920px] mx-auto">
         
-        {/* Mobile Filter Bar */}
-        <div className="md:hidden flex flex-col gap-3 mb-6">
-             <div className="flex items-center bg-[#222] rounded-xl px-4 py-3">
-                <Search size={18} className="text-gray-400" />
+        {/* Mobile Search & Type Filter Row */}
+        <div className="md:hidden flex flex-col gap-4 mb-6 sticky top-[80px] z-30 -mx-4 px-4 pb-2 bg-gradient-to-b from-black via-black to-transparent">
+             {/* Search */}
+             <div className="flex items-center bg-[#1c1c1e] rounded-xl px-3 py-2.5">
+                <Search size={18} className="text-gray-500" />
                 <input 
                     type="search" 
                     placeholder="Search library..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-transparent border-none focus:outline-none text-base px-3 w-full text-white"
+                    className="bg-transparent border-none focus:outline-none text-[15px] px-3 w-full text-white placeholder-gray-600"
                 />
             </div>
-            <div className="flex overflow-x-auto gap-2 pb-1 hide-scrollbar -mx-4 px-4">
-                {(['all', 'watchlist', 'in-progress', 'watched'] as const).map(tab => (
-                    <button 
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition-all ${
-                            activeTab === tab 
-                            ? 'bg-red-600 text-white border-red-600 shadow-md' 
-                            : 'bg-[#222] text-gray-400 border-transparent'
+
+            {/* Segmented Control for Type */}
+            <div className="flex bg-[#1c1c1e] p-1 rounded-lg">
+                {(['all', 'movie', 'series'] as const).map((type) => (
+                     <button 
+                        key={type}
+                        onClick={() => setActiveType(type)}
+                        className={`flex-1 py-1.5 rounded-[6px] text-[13px] font-semibold transition-all ${
+                            activeType === type 
+                            ? 'bg-[#636366] text-white shadow' 
+                            : 'text-gray-400'
                         }`}
                     >
-                        {tab === 'in-progress' ? 'Watching' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                        {type === 'all' ? 'All' : type === 'movie' ? 'Movies' : 'TV'}
                     </button>
                 ))}
             </div>
         </div>
 
-        {/* Type Toggles & Stats */}
-        <div className="flex flex-col md:flex-row justify-between items-end md:items-center mb-8 gap-4">
-            <div className="flex bg-[#1a1a1a] p-1 rounded-xl border border-gray-800 w-full md:w-auto">
-                <button 
-                    onClick={() => setActiveType('all')}
-                    className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all duration-300 ${
-                        activeType === 'all' 
-                        ? 'bg-[#333] text-white shadow-lg ring-1 ring-white/10' 
-                        : 'text-gray-400 hover:text-white hover:bg-[#252525]'
-                    }`}
-                >
-                    <LayoutGrid size={18} /> All
-                </button>
-                <button 
-                    onClick={() => setActiveType('movie')}
-                    className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all duration-300 ${
-                        activeType === 'movie' 
-                        ? 'bg-blue-900/40 text-blue-400 shadow-lg ring-1 ring-blue-500/20' 
-                        : 'text-gray-400 hover:text-white hover:bg-[#252525]'
-                    }`}
-                >
-                    <Film size={18} /> Movies
-                </button>
-                <button 
-                    onClick={() => setActiveType('series')}
-                    className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all duration-300 ${
-                        activeType === 'series' 
-                        ? 'bg-purple-900/40 text-purple-400 shadow-lg ring-1 ring-purple-500/20' 
-                        : 'text-gray-400 hover:text-white hover:bg-[#252525]'
-                    }`}
-                >
-                    <Tv size={18} /> TV
-                </button>
+        {/* Desktop Type Filter & Stats */}
+        <div className="hidden md:flex justify-between items-center mb-8">
+            <div className="flex bg-[#1c1c1e] p-1 rounded-xl">
+                 {(['all', 'movie', 'series'] as const).map((type) => (
+                     <button 
+                        key={type}
+                        onClick={() => setActiveType(type)}
+                        className={`px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all ${
+                            activeType === type 
+                            ? 'bg-[#3a3a3c] text-white shadow-md' 
+                            : 'text-gray-500 hover:text-gray-300'
+                        }`}
+                    >
+                        {type === 'all' && <LayoutGrid size={16} />}
+                        {type === 'movie' && <Film size={16} />}
+                        {type === 'series' && <Tv size={16} />}
+                        {type === 'all' ? 'All Items' : type === 'movie' ? 'Movies' : 'TV Shows'}
+                    </button>
+                ))}
             </div>
-
-            <div className="text-gray-400 text-xs font-medium px-2">
+             <div className="text-gray-500 text-xs font-bold uppercase tracking-wider">
                 {libraryLoading ? (
                     <span className="flex items-center gap-2"><Loader2 className="animate-spin" size={12}/> Syncing...</span>
                 ) : (
-                    <span>{filteredLibrary.length} items</span>
+                    <span>{filteredLibrary.length} Titles</span>
                 )}
             </div>
         </div>
 
         {/* Content Grid */}
         {filteredLibrary.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[50vh] text-gray-500 bg-[#1a1a1a] rounded-3xl border border-dashed border-gray-800 mx-auto max-w-2xl p-6 text-center">
-                <div className="bg-[#222] p-6 rounded-full mb-4">
-                    <ListFilter size={48} className="opacity-50" />
+            <div className="flex flex-col items-center justify-center h-[50vh] text-gray-500 mx-auto max-w-sm text-center px-6">
+                <div className="bg-[#1c1c1e] p-6 rounded-full mb-6">
+                    <ListFilter size={48} className="opacity-30" />
                 </div>
-                <p className="text-xl font-medium text-gray-300">
-                    {libraryLoading ? 'Loading Library...' : 'Nothing here yet'}
+                <p className="text-lg font-medium text-white mb-2">
+                    {libraryLoading ? 'Loading Library...' : 'Library is Empty'}
                 </p>
-                <p className="text-sm mt-2 opacity-60">
-                    Start by adding movies or TV shows to your collection.
+                <p className="text-sm text-gray-500 leading-relaxed mb-8">
+                    Tap the + button to start tracking your movies and TV shows.
                 </p>
                 {!libraryLoading && library.length === 0 && (
-                    <button onClick={() => setIsAddModalOpen(true)} className="mt-6 text-black bg-white px-8 py-3 rounded-full font-bold hover:scale-105 active:scale-95 transition-all shadow-xl">
-                        Add Content
+                    <button onClick={() => setIsAddModalOpen(true)} className="text-black bg-white px-8 py-3 rounded-full font-bold active:scale-95 transition-transform shadow-xl">
+                        Start Collection
                     </button>
                 )}
             </div>
         ) : (
              <>
-                {/* MOVIE SPLIT VIEW: Specifically requested to show distinct sections */}
+                {/* MOVIE SPLIT VIEW: Explicit sections for VOD vs Theatrical */}
                 {activeType === 'movie' && movieSections ? (
                     <div className="space-y-12 animate-in fade-in duration-500">
                         
                         {/* THEATRICAL SECTION */}
-                        <section className="bg-[#1a1a1a]/30 p-4 rounded-2xl border border-white/5">
-                             <div className="flex items-center gap-3 mb-6 pb-2 border-b border-white/5">
-                                <div className="p-2 bg-blue-900/30 text-blue-400 rounded-lg">
-                                    <Ticket size={24} />
-                                </div>
-                                <div>
-                                    <h2 className="text-xl font-bold text-white">Theatrical / Standard</h2>
-                                    <p className="text-xs text-gray-500">Movies released in theaters</p>
-                                </div>
-                                <span className="ml-auto text-sm font-medium text-gray-400 bg-white/5 px-2 py-1 rounded-md">{movieSections.theatrical.length}</span>
+                        <section>
+                             <div className="flex items-center gap-3 mb-4 px-1">
+                                <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                                    <Ticket size={20} className="text-blue-500" />
+                                    Theatrical
+                                </h2>
+                                <div className="h-px bg-gray-800 flex-1"></div>
+                                <span className="text-xs font-bold text-gray-500">{movieSections.theatrical.length}</span>
                             </div>
                             
                             {movieSections.theatrical.length > 0 ? (
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 md:gap-6">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-6">
                                     {movieSections.theatrical.map(item => (
                                         <MediaCard 
                                             key={item.id} 
@@ -417,25 +437,25 @@ const App: React.FC = () => {
                                     ))}
                                 </div>
                             ) : (
-                                <div className="text-center py-8 text-gray-600 text-sm italic">No theatrical movies found.</div>
+                                <div className="text-center py-8 text-gray-600 text-sm font-medium border border-dashed border-gray-800 rounded-xl bg-[#111]">
+                                    No theatrical movies found.
+                                </div>
                             )}
                         </section>
 
                         {/* VOD SECTION */}
-                        <section className="bg-[#1a1a1a]/30 p-4 rounded-2xl border border-white/5">
-                             <div className="flex items-center gap-3 mb-6 pb-2 border-b border-white/5">
-                                 <div className="p-2 bg-purple-900/30 text-purple-400 rounded-lg">
-                                    <MonitorPlay size={24} />
-                                </div>
-                                <div>
-                                    <h2 className="text-xl font-bold text-white">Streaming Originals</h2>
-                                    <p className="text-xs text-gray-500">Netflix, Amazon, Hulu, etc.</p>
-                                </div>
-                                <span className="ml-auto text-sm font-medium text-gray-400 bg-white/5 px-2 py-1 rounded-md">{movieSections.vod.length}</span>
+                        <section>
+                             <div className="flex items-center gap-3 mb-4 px-1">
+                                <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                                    <MonitorPlay size={20} className="text-purple-500" />
+                                    Streaming Originals
+                                </h2>
+                                <div className="h-px bg-gray-800 flex-1"></div>
+                                <span className="text-xs font-bold text-gray-500">{movieSections.vod.length}</span>
                             </div>
 
                             {movieSections.vod.length > 0 ? (
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 md:gap-6">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-6">
                                     {movieSections.vod.map(item => (
                                         <MediaCard 
                                             key={item.id} 
@@ -446,13 +466,15 @@ const App: React.FC = () => {
                                     ))}
                                 </div>
                             ) : (
-                                <div className="text-center py-8 text-gray-600 text-sm italic">No streaming originals found. Edit a movie to change its source.</div>
+                                <div className="text-center py-8 text-gray-600 text-sm font-medium border border-dashed border-gray-800 rounded-xl bg-[#111]">
+                                    No streaming originals found.
+                                </div>
                             )}
                         </section>
                     </div>
                 ) : (
                     // STANDARD GRID FOR ALL / SERIES
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-4 md:gap-6 animate-in fade-in duration-500">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-6 animate-in fade-in duration-500">
                         {filteredLibrary.map(item => (
                             <MediaCard 
                                 key={item.id} 
@@ -466,6 +488,29 @@ const App: React.FC = () => {
              </>
         )}
       </main>
+
+      {/* Mobile Bottom Tab Bar */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 h-[80px] bg-black/90 backdrop-blur-xl border-t border-white/5 flex items-start pt-2 justify-around z-50 pb-safe">
+        {(['all', 'watchlist', 'in-progress', 'watched'] as const).map(tab => (
+            <button 
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`flex flex-col items-center gap-1 w-16 transition-colors ${
+                    activeTab === tab 
+                    ? 'text-white' 
+                    : 'text-gray-500'
+                }`}
+            >
+                {tab === 'all' && <LayoutGrid size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />}
+                {tab === 'watchlist' && <Plus size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />}
+                {tab === 'in-progress' && <Play size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />}
+                {tab === 'watched' && <CheckCircle2 size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />}
+                <span className="text-[10px] font-medium">
+                    {tab === 'all' ? 'Library' : tab === 'in-progress' ? 'Watching' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </span>
+            </button>
+        ))}
+      </div>
 
       <AddMediaModal 
         isOpen={isAddModalOpen} 
