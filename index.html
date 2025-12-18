@@ -9,9 +9,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="CineTrack">
     
-    <!-- App Icon (Embedded SVG) -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='120' fill='%23141414'/%3E%3Cpath d='M140 140 L372 256 L140 372 Z' fill='%23DC2626'/%3E%3Cpath d='M140 140 L372 256 L140 372 Z' fill='none' stroke='%23991B1B' stroke-width='20' stroke-linejoin='round'/%3E%3C/svg%3E">
-    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='120' fill='%23141414'/%3E%3Cpath d='M140 140 L372 256 L140 372 Z' fill='%23DC2626'/%3E%3Cpath d='M140 140 L372 256 L140 372 Z' fill='none' stroke='%23991B1B' stroke-width='20' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <!-- Custom Home Screen Icon (Optimized for iPhone 14 Pro Max) -->
+    <!-- This SVG is scaled perfectly and uses the high-contrast red/dark theme of your app -->
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='110' fill='%23000000'/%3E%3Cpath d='M160 140 L400 256 L160 372 Z' fill='%23DC2626'/%3E%3Crect x='60' y='60' width='392' height='392' rx='60' fill='none' stroke='%23DC2626' stroke-width='15' stroke-opacity='0.3'/%3E%3C/svg%3E">
+    
+    <!-- Standard Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='120' fill='%23141414'/%3E%3Cpath d='M140 140 L372 256 L140 372 Z' fill='%23DC2626'/%3E%3C/svg%3E">
     
     <meta name="theme-color" content="#000000">
 
@@ -26,6 +29,9 @@
         -webkit-tap-highlight-color: transparent;
         padding-bottom: env(safe-area-inset-bottom);
         overscroll-behavior-y: none;
+        /* Optimized for high-end displays */
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
       }
       
       /* Hide Scrollbar but keep functionality */
@@ -59,6 +65,11 @@
       }
       .pt-safe {
         padding-top: max(env(safe-area-inset-top), 1rem);
+      }
+
+      /* Fix for iOS momentum scrolling */
+      .overflow-y-auto {
+        -webkit-overflow-scrolling: touch;
       }
     </style>
 <script type="importmap">
