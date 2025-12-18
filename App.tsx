@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2, UserCircle, Database, CloudOff, Play, CheckCircle2 } from 'lucide-react';
-import { MediaItem, SearchResult, WatchStatus } from './types';
+import { Plus, Film, Tv, LayoutGrid, ListFilter, Search, Clapperboard, Ticket, MonitorPlay, LogOut, Loader2, UserCircle, Database, CloudOff, Play, CheckCircle2, ArrowUpDown, ChevronDown, Filter, X } from 'lucide-react';
+import { MediaItem, SearchResult, WatchStatus, PersonalRating } from './types';
 import MediaCard from './components/MediaCard';
 import AddMediaModal from './components/AddMediaModal';
 import EditMediaModal from './components/EditMediaModal';
@@ -14,7 +14,7 @@ const App: React.FC = () => {
   // --- State ---
   const [user, setUser] = useState<User | null>(null);
   
-  // Modes: Guest (public local), Personal Local (owner but offline/config error), Authenticated (Firebase)
+  // Modes
   const [isGuest, setIsGuest] = useState(false);
   const [isPersonalLocal, setIsPersonalLocal] = useState(false);
   
@@ -22,14 +22,17 @@ const App: React.FC = () => {
   const [library, setLibrary] = useState<MediaItem[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
 
+  // Filters & Sorting
   const [activeTab, setActiveTab] = useState<WatchStatus | 'all'>('all');
   const [activeType, setActiveType] = useState<'all' | 'movie' | 'series'>('all');
+  const [sortBy, setSortBy] = useState<'addedAt' | 'title' | 'rating'>('addedAt');
+  const [ratingFilter, setRatingFilter] = useState<PersonalRating | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MediaItem | null>(null);
 
-  // --- Auth & Data Sync Effects ---
+  // --- Auth & Data Sync ---
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -43,7 +46,6 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // 1. Personal Local Mode
     if (isPersonalLocal) {
         setLibraryLoading(true);
         const saved = localStorage.getItem('cine_library_personal');
@@ -54,7 +56,6 @@ const App: React.FC = () => {
         return;
     }
 
-    // 2. Guest Mode
     if (isGuest) {
         setLibraryLoading(true);
         const saved = localStorage.getItem('cine_library');
@@ -65,13 +66,11 @@ const App: React.FC = () => {
         return;
     }
 
-    // 3. Not logged in
     if (!user) {
         setLibrary([]);
         return;
     }
 
-    // 4. Firebase Sync
     setLibraryLoading(true);
     const libraryRef = collection(db, 'users', user.uid, 'library');
     const q = query(libraryRef);
@@ -91,24 +90,54 @@ const App: React.FC = () => {
     return () => unsubscribeSnapshot();
   }, [user, isGuest, isPersonalLocal]);
 
-  // --- Derived State (Filtering) ---
+  // --- Sorting Logic Mapping ---
+  const ratingValueMap: Record<string, number> = {
+    'Excellent': 5,
+    'Good': 4,
+    'Average': 3,
+    'Bad': 2,
+    'Terrible': 1
+  };
+
+  // --- Derived State (Filtering & Sorting) ---
   const filteredLibrary = useMemo(() => {
     return library
       .filter(item => {
+        // Tab Filter (Watchlist/Watching/Watched)
         if (activeTab !== 'all' && item.status !== activeTab) return false;
+        
+        // Type Filter (Movie/Series)
         if (activeType !== 'all' && item.type !== activeType) return false;
+        
+        // Rating Filter (Specific to Movies + Watched tab)
+        if (activeTab === 'watched' && activeType === 'movie' && ratingFilter !== 'all') {
+            if (item.personalRating !== ratingFilter) return false;
+        }
+
+        // Search Query
         if (searchQuery && !item.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+        
         return true;
       })
-      .sort((a, b) => b.addedAt - a.addedAt);
-  }, [library, activeTab, activeType, searchQuery]);
+      .sort((a, b) => {
+        // Sort Logic
+        if (sortBy === 'title') {
+            return a.title.localeCompare(b.title);
+        }
+        if (sortBy === 'rating') {
+            // Prioritize Personal Rating value, then TMDB rating
+            const aVal = ratingValueMap[a.personalRating || ''] || a.voteAverage || 0;
+            const bVal = ratingValueMap[b.personalRating || ''] || b.voteAverage || 0;
+            return bVal - aVal;
+        }
+        // Default: addedAt (Recency)
+        return b.addedAt - a.addedAt;
+      });
+  }, [library, activeTab, activeType, searchQuery, sortBy, ratingFilter]);
 
-  // Calculate sections for Movies view
+  // Sections for Movies view
   const movieSections = useMemo(() => {
-    // We only calculate sections if we are specifically in the 'movie' tab
     if (activeType !== 'movie') return null;
-    
-    // Items with explicit 'Theater' or undefined (legacy/default) go to Theatrical
     const theatrical = filteredLibrary.filter(item => !item.releaseSource || item.releaseSource === 'Theater');
     const vod = filteredLibrary.filter(item => item.releaseSource === 'VOD');
     return { theatrical, vod };
@@ -119,17 +148,11 @@ const App: React.FC = () => {
       localStorage.setItem(key, JSON.stringify(items));
   };
 
-  // Helper to remove undefined values which Firebase hates
-  const sanitizeForFirestore = (data: any) => {
-    return JSON.parse(JSON.stringify(data));
-  };
+  const sanitizeForFirestore = (data: any) => JSON.parse(JSON.stringify(data));
 
   // --- Handlers ---
   const generateId = () => {
-    // Fallback for environments where crypto.randomUUID is not available (e.g. non-secure contexts on mobile)
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-        return crypto.randomUUID();
-    }
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
   };
 
@@ -137,7 +160,6 @@ const App: React.FC = () => {
     if (!user && !isGuest && !isPersonalLocal) return;
 
     try {
-        // Fetch details safely.
         const details = await getMediaDetails(result.tmdbId, result.type);
         const id = generateId();
 
@@ -145,7 +167,7 @@ const App: React.FC = () => {
             id,
             tmdbId: result.tmdbId,
             title: result.title,
-            type: result.type, // 'movie' or 'series'
+            type: result.type,
             status: 'watchlist',
             year: result.year,
             description: result.description,
@@ -155,32 +177,18 @@ const App: React.FC = () => {
             runtime: details.runtime,
             addedAt: Date.now(),
             progress: { season: 1, episode: 1 },
-            // Only set releaseSource for movies. Series is undefined.
             releaseSource: result.type === 'movie' ? 'Theater' : undefined,
         };
         
         setIsAddModalOpen(false);
         setEditingItem(newItem);
 
-        // Save based on mode
-        if (isPersonalLocal) {
-            saveToLocal([newItem, ...library], 'cine_library_personal');
-        } else if (isGuest) {
-            saveToLocal([newItem, ...library], 'cine_library');
-        } else if (user) {
-            await setDoc(doc(db, 'users', user.uid, 'library', id), sanitizeForFirestore(newItem));
-        }
-
-        // UX: If adding a Series while looking at Movies, switch to Series tab so user sees it
-        if (activeType === 'movie' && result.type === 'series') {
-            setActiveType('series');
-        } else if (activeType === 'series' && result.type === 'movie') {
-            setActiveType('movie');
-        }
+        if (isPersonalLocal) saveToLocal([newItem, ...library], 'cine_library_personal');
+        else if (isGuest) saveToLocal([newItem, ...library], 'cine_library');
+        else if (user) await setDoc(doc(db, 'users', user.uid, 'library', id), sanitizeForFirestore(newItem));
 
     } catch (e) {
         console.error("Error adding item:", e);
-        alert("Could not add item. Please try again.");
     }
   };
 
@@ -188,53 +196,34 @@ const App: React.FC = () => {
     if (!user && !isGuest && !isPersonalLocal) return;
     setEditingItem(null);
 
-    if (isPersonalLocal) {
-        saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library_personal');
-    } else if (isGuest) {
-        saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library');
-    } else if (user) {
-        await setDoc(doc(db, 'users', user.uid, 'library', updated.id), sanitizeForFirestore(updated));
-    }
+    if (isPersonalLocal) saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library_personal');
+    else if (isGuest) saveToLocal(library.map(item => item.id === updated.id ? updated : item), 'cine_library');
+    else if (user) await setDoc(doc(db, 'users', user.uid, 'library', updated.id), sanitizeForFirestore(updated));
   };
 
   const handleDeleteItem = async (id: string) => {
     if (!user && !isGuest && !isPersonalLocal) return;
-    
-    // Optimistically close modal to feel snappy
     setEditingItem(null);
-
     try {
-        if (isPersonalLocal) {
-            saveToLocal(library.filter(item => item.id !== id), 'cine_library_personal');
-        } else if (isGuest) {
-            saveToLocal(library.filter(item => item.id !== id), 'cine_library');
-        } else if (user) {
-            await deleteDoc(doc(db, 'users', user.uid, 'library', id));
-        }
+        if (isPersonalLocal) saveToLocal(library.filter(item => item.id !== id), 'cine_library_personal');
+        else if (isGuest) saveToLocal(library.filter(item => item.id !== id), 'cine_library');
+        else if (user) await deleteDoc(doc(db, 'users', user.uid, 'library', id));
     } catch (error) {
         console.error("Error deleting item:", error);
-        alert("Failed to delete item. It may have already been removed.");
     }
   };
 
   const handleQuickAction = async (item: MediaItem, action: 'watched' | 'increment') => {
     if (!user && !isGuest && !isPersonalLocal) return;
-
     let updated = { ...item };
-    if (action === 'watched') {
-        updated.status = 'watched' as WatchStatus;
-    } else if (action === 'increment') {
+    if (action === 'watched') updated.status = 'watched' as WatchStatus;
+    else if (action === 'increment') {
         const currentEp = item.progress.episode || 1;
         updated.progress = { ...item.progress, episode: currentEp + 1 };
     }
-    
-    if (isPersonalLocal) {
-        saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library_personal');
-    } else if (isGuest) {
-        saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library');
-    } else if (user) {
-        await setDoc(doc(db, 'users', user.uid, 'library', item.id), sanitizeForFirestore(updated));
-    }
+    if (isPersonalLocal) saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library_personal');
+    else if (isGuest) saveToLocal(library.map(l => l.id === item.id ? updated : l), 'cine_library');
+    else if (user) await setDoc(doc(db, 'users', user.uid, 'library', item.id), sanitizeForFirestore(updated));
   };
 
   const handleLogout = () => {
@@ -261,13 +250,14 @@ const App: React.FC = () => {
       );
   }
 
+  const ratingOptions: PersonalRating[] = ['Excellent', 'Good', 'Average', 'Bad', 'Terrible'];
+
   return (
     <div className="min-h-screen bg-black text-white flex flex-col font-sans pb-safe">
       
       {/* --- Header / Navigation --- */}
       <nav className="fixed top-0 left-0 right-0 z-40 pt-safe px-4 md:px-10 flex flex-col backdrop-blur-xl bg-black/70 border-b border-white/5">
         <div className="h-16 flex items-center justify-between">
-            {/* Logo */}
             <h1 className="text-2xl font-bold tracking-tight cursor-pointer flex items-center gap-2" onClick={() => {setActiveTab('all'); setActiveType('all')}}>
                 <span className="text-red-600">
                     <Clapperboard size={24} fill="currentColor" strokeWidth={0} />
@@ -275,14 +265,12 @@ const App: React.FC = () => {
                 <span>CineTrack</span>
             </h1>
 
-            {/* Actions */}
             <div className="flex items-center gap-3">
-                 {/* Desktop Search */}
                 <div className={`hidden md:flex items-center bg-[#1c1c1e] rounded-xl px-3 py-1.5`}>
                     <Search size={16} className="text-gray-400" />
                     <input 
                         type="search" 
-                        placeholder="Filter..." 
+                        placeholder="Filter list..." 
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="bg-transparent border-none focus:outline-none text-sm px-2 w-48 text-white placeholder-gray-500"
@@ -305,12 +293,14 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Desktop Tab Bar (Integrated into header) */}
         <div className="hidden md:flex items-center gap-8 pb-3 text-sm font-medium">
              {(['all', 'watchlist', 'in-progress', 'watched'] as const).map(tab => (
                     <button 
                         key={tab}
-                        onClick={() => setActiveTab(tab)}
+                        onClick={() => {
+                            setActiveTab(tab);
+                            setRatingFilter('all'); // Reset specific rating filter on tab change
+                        }}
                         className={`transition-all duration-200 relative py-1 ${
                             activeTab === tab 
                             ? 'text-white' 
@@ -327,67 +317,88 @@ const App: React.FC = () => {
       </nav>
 
       {/* --- Main Content --- */}
-      <main className="flex-1 px-4 md:px-10 pt-[100px] md:pt-[130px] pb-24 w-full max-w-[1920px] mx-auto">
+      <main className="flex-1 px-4 md:px-10 pt-[100px] md:pt-[140px] pb-24 w-full max-w-[1920px] mx-auto">
         
-        {/* Mobile Search & Type Filter Row */}
-        <div className="md:hidden flex flex-col gap-4 mb-6 sticky top-[80px] z-30 -mx-4 px-4 pb-2 bg-gradient-to-b from-black via-black to-transparent">
-             {/* Search */}
-             <div className="flex items-center bg-[#1c1c1e] rounded-xl px-3 py-2.5">
-                <Search size={18} className="text-gray-500" />
-                <input 
-                    type="search" 
-                    placeholder="Search library..." 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-transparent border-none focus:outline-none text-[15px] px-3 w-full text-white placeholder-gray-600"
-                />
+        {/* Sorting & Advanced Filter Bar */}
+        <div className="mb-6 space-y-4">
+            {/* Main Sorting Controls */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex bg-[#1c1c1e] p-1 rounded-lg w-full sm:w-auto">
+                    {(['all', 'movie', 'series'] as const).map((type) => (
+                         <button 
+                            key={type}
+                            onClick={() => {
+                                setActiveType(type);
+                                setRatingFilter('all');
+                            }}
+                            className={`flex-1 sm:flex-none px-5 py-1.5 rounded-[6px] text-[13px] font-semibold transition-all ${
+                                activeType === type ? 'bg-[#3a3a3c] text-white shadow' : 'text-gray-400'
+                            }`}
+                        >
+                            {type === 'all' ? 'Everything' : type === 'movie' ? 'Movies' : 'TV Shows'}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="flex items-center gap-3 overflow-x-auto hide-scrollbar">
+                    <span className="text-gray-500 text-[11px] font-bold uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap">
+                        <ArrowUpDown size={12} /> Sort By
+                    </span>
+                    <div className="flex bg-[#1c1c1e] p-1 rounded-lg">
+                        {(['addedAt', 'title', 'rating'] as const).map((s) => (
+                            <button
+                                key={s}
+                                onClick={() => setSortBy(s)}
+                                className={`px-4 py-1.5 rounded-[6px] text-[12px] font-bold transition-all whitespace-nowrap ${
+                                    sortBy === s ? 'bg-[#3a3a3c] text-white shadow' : 'text-gray-500'
+                                }`}
+                            >
+                                {s === 'addedAt' ? 'Recent' : s === 'title' ? 'A-Z' : 'Rating'}
+                            </button>
+                        ))}
+                    </div>
+                </div>
             </div>
 
-            {/* Segmented Control for Type */}
-            <div className="flex bg-[#1c1c1e] p-1 rounded-lg">
-                {(['all', 'movie', 'series'] as const).map((type) => (
-                     <button 
-                        key={type}
-                        onClick={() => setActiveType(type)}
-                        className={`flex-1 py-1.5 rounded-[6px] text-[13px] font-semibold transition-all ${
-                            activeType === type 
-                            ? 'bg-[#636366] text-white shadow' 
-                            : 'text-gray-400'
+            {/* Contextual Filter Chips (iOS Style) */}
+            {activeTab === 'watched' && activeType === 'movie' && (
+                <div className="animate-in slide-in-from-left-4 fade-in flex items-center gap-3 py-1 border-t border-white/5 pt-4 overflow-x-auto hide-scrollbar">
+                    <span className="text-gray-500 text-[11px] font-bold uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap">
+                        <Filter size={12} /> Filter Rating
+                    </span>
+                    <button
+                        onClick={() => setRatingFilter('all')}
+                        className={`px-4 py-1.5 rounded-full text-[12px] font-bold transition-all border whitespace-nowrap ${
+                            ratingFilter === 'all' 
+                            ? 'bg-white text-black border-white' 
+                            : 'bg-transparent border-white/10 text-gray-400 hover:border-white/30'
                         }`}
                     >
-                        {type === 'all' ? 'All' : type === 'movie' ? 'Movies' : 'TV'}
+                        All
                     </button>
-                ))}
-            </div>
-        </div>
-
-        {/* Desktop Type Filter & Stats */}
-        <div className="hidden md:flex justify-between items-center mb-8">
-            <div className="flex bg-[#1c1c1e] p-1 rounded-xl">
-                 {(['all', 'movie', 'series'] as const).map((type) => (
-                     <button 
-                        key={type}
-                        onClick={() => setActiveType(type)}
-                        className={`px-6 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all ${
-                            activeType === type 
-                            ? 'bg-[#3a3a3c] text-white shadow-md' 
-                            : 'text-gray-500 hover:text-gray-300'
-                        }`}
-                    >
-                        {type === 'all' && <LayoutGrid size={16} />}
-                        {type === 'movie' && <Film size={16} />}
-                        {type === 'series' && <Tv size={16} />}
-                        {type === 'all' ? 'All Items' : type === 'movie' ? 'Movies' : 'TV Shows'}
-                    </button>
-                ))}
-            </div>
-             <div className="text-gray-500 text-xs font-bold uppercase tracking-wider">
-                {libraryLoading ? (
-                    <span className="flex items-center gap-2"><Loader2 className="animate-spin" size={12}/> Syncing...</span>
-                ) : (
-                    <span>{filteredLibrary.length} Titles</span>
-                )}
-            </div>
+                    {ratingOptions.map(opt => (
+                         <button
+                            key={opt}
+                            onClick={() => setRatingFilter(opt)}
+                            className={`px-4 py-1.5 rounded-full text-[12px] font-bold transition-all border whitespace-nowrap ${
+                                ratingFilter === opt 
+                                ? 'bg-red-600 text-white border-red-600 shadow-[0_0_10px_rgba(220,38,38,0.4)]' 
+                                : 'bg-transparent border-white/10 text-gray-400 hover:border-white/30'
+                            }`}
+                        >
+                            {opt}
+                        </button>
+                    ))}
+                    {ratingFilter !== 'all' && (
+                         <button
+                            onClick={() => setRatingFilter('all')}
+                            className="flex items-center gap-1.5 text-[11px] font-bold text-red-500 bg-red-500/10 px-3 py-1.5 rounded-full border border-red-500/20"
+                         >
+                            <X size={10} /> Clear
+                         </button>
+                    )}
+                </div>
+            )}
         </div>
 
         {/* Content Grid */}
@@ -397,24 +408,16 @@ const App: React.FC = () => {
                     <ListFilter size={48} className="opacity-30" />
                 </div>
                 <p className="text-lg font-medium text-white mb-2">
-                    {libraryLoading ? 'Loading Library...' : 'Library is Empty'}
+                    {searchQuery || ratingFilter !== 'all' ? 'No results found' : 'Library is Empty'}
                 </p>
-                <p className="text-sm text-gray-500 leading-relaxed mb-8">
-                    Tap the + button to start tracking your movies and TV shows.
+                <p className="text-sm text-gray-500 leading-relaxed">
+                    Try adjusting your filters or adding something new to your collection.
                 </p>
-                {!libraryLoading && library.length === 0 && (
-                    <button onClick={() => setIsAddModalOpen(true)} className="text-black bg-white px-8 py-3 rounded-full font-bold active:scale-95 transition-transform shadow-xl">
-                        Start Collection
-                    </button>
-                )}
             </div>
         ) : (
              <>
-                {/* MOVIE SPLIT VIEW: Explicit sections for VOD vs Theatrical */}
-                {activeType === 'movie' && movieSections ? (
+                {activeType === 'movie' && movieSections && sortBy === 'addedAt' ? (
                     <div className="space-y-12 animate-in fade-in duration-500">
-                        
-                        {/* THEATRICAL SECTION */}
                         <section>
                              <div className="flex items-center gap-3 mb-4 px-1">
                                 <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
@@ -424,26 +427,13 @@ const App: React.FC = () => {
                                 <div className="h-px bg-gray-800 flex-1"></div>
                                 <span className="text-xs font-bold text-gray-500">{movieSections.theatrical.length}</span>
                             </div>
-                            
-                            {movieSections.theatrical.length > 0 ? (
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-6">
-                                    {movieSections.theatrical.map(item => (
-                                        <MediaCard 
-                                            key={item.id} 
-                                            item={item} 
-                                            onClick={() => setEditingItem(item)}
-                                            onQuickAction={handleQuickAction}
-                                        />
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="text-center py-8 text-gray-600 text-sm font-medium border border-dashed border-gray-800 rounded-xl bg-[#111]">
-                                    No theatrical movies found.
-                                </div>
-                            )}
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-6">
+                                {movieSections.theatrical.map(item => (
+                                    <MediaCard key={item.id} item={item} onClick={() => setEditingItem(item)} onQuickAction={handleQuickAction} />
+                                ))}
+                            </div>
                         </section>
 
-                        {/* VOD SECTION */}
                         <section>
                              <div className="flex items-center gap-3 mb-4 px-1">
                                 <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
@@ -453,35 +443,17 @@ const App: React.FC = () => {
                                 <div className="h-px bg-gray-800 flex-1"></div>
                                 <span className="text-xs font-bold text-gray-500">{movieSections.vod.length}</span>
                             </div>
-
-                            {movieSections.vod.length > 0 ? (
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-6">
-                                    {movieSections.vod.map(item => (
-                                        <MediaCard 
-                                            key={item.id} 
-                                            item={item} 
-                                            onClick={() => setEditingItem(item)}
-                                            onQuickAction={handleQuickAction}
-                                        />
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="text-center py-8 text-gray-600 text-sm font-medium border border-dashed border-gray-800 rounded-xl bg-[#111]">
-                                    No streaming originals found.
-                                </div>
-                            )}
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-6">
+                                {movieSections.vod.map(item => (
+                                    <MediaCard key={item.id} item={item} onClick={() => setEditingItem(item)} onQuickAction={handleQuickAction} />
+                                ))}
+                            </div>
                         </section>
                     </div>
                 ) : (
-                    // STANDARD GRID FOR ALL / SERIES
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-6 animate-in fade-in duration-500">
                         {filteredLibrary.map(item => (
-                            <MediaCard 
-                                key={item.id} 
-                                item={item} 
-                                onClick={() => setEditingItem(item)}
-                                onQuickAction={handleQuickAction}
-                            />
+                            <MediaCard key={item.id} item={item} onClick={() => setEditingItem(item)} onQuickAction={handleQuickAction} />
                         ))}
                     </div>
                 )}
@@ -494,11 +466,12 @@ const App: React.FC = () => {
         {(['all', 'watchlist', 'in-progress', 'watched'] as const).map(tab => (
             <button 
                 key={tab}
-                onClick={() => setActiveTab(tab)}
+                onClick={() => {
+                    setActiveTab(tab);
+                    setRatingFilter('all');
+                }}
                 className={`flex flex-col items-center gap-1 w-16 transition-colors ${
-                    activeTab === tab 
-                    ? 'text-white' 
-                    : 'text-gray-500'
+                    activeTab === tab ? 'text-white' : 'text-gray-500'
                 }`}
             >
                 {tab === 'all' && <LayoutGrid size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />}
@@ -506,26 +479,14 @@ const App: React.FC = () => {
                 {tab === 'in-progress' && <Play size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />}
                 {tab === 'watched' && <CheckCircle2 size={24} strokeWidth={activeTab === tab ? 2.5 : 2} />}
                 <span className="text-[10px] font-medium">
-                    {tab === 'all' ? 'Library' : tab === 'in-progress' ? 'Watching' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    {tab === 'all' ? 'Home' : tab === 'in-progress' ? 'Watching' : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </span>
             </button>
         ))}
       </div>
 
-      <AddMediaModal 
-        isOpen={isAddModalOpen} 
-        onClose={() => setIsAddModalOpen(false)} 
-        onAdd={handleAddItem} 
-      />
-      
-      <EditMediaModal 
-        item={editingItem} 
-        isOpen={!!editingItem} 
-        onClose={() => setEditingItem(null)} 
-        onSave={handleUpdateItem}
-        onDelete={handleDeleteItem}
-      />
-      
+      <AddMediaModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onAdd={handleAddItem} />
+      <EditMediaModal item={editingItem} isOpen={!!editingItem} onClose={() => setEditingItem(null)} onSave={handleUpdateItem} onDelete={handleDeleteItem} />
     </div>
   );
 };

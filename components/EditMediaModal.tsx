@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trash2, Save, Tv, Film, Ticket, MonitorPlay, Minus, Plus as PlusIcon, CheckCircle2 } from 'lucide-react';
+import { X, Trash2, Save, Tv, Film, Ticket, MonitorPlay, Minus, Plus as PlusIcon, CheckCircle2, Play, ChevronRight } from 'lucide-react';
 import { MediaItem, WatchStatus, PersonalRating, ReleaseSource, VodProvider } from '../types';
 
 interface EditMediaModalProps {
@@ -33,7 +33,6 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, isOpen, onClose, 
     }
   }, [item, isOpen]);
 
-  // Handle closing animation/logic if needed, but for now direct render check
   if (!isOpen || !item) return null;
 
   const handleSave = () => {
@@ -52,6 +51,11 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, isOpen, onClose, 
     onSave(updated);
   };
 
+  const handleNextEpisode = () => {
+    setEpisode(prev => prev + 1);
+    if (navigator.vibrate) navigator.vibrate(15);
+  };
+
   const isSeries = item.type === 'series';
   const isMovie = item.type === 'movie';
 
@@ -67,18 +71,14 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, isOpen, onClose, 
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center sm:p-4 animate-in fade-in duration-200">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose}></div>
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose}></div>
 
-      {/* Modal Content - Bottom Sheet on Mobile, Center Card on Desktop */}
-      <div className="relative w-full max-w-lg bg-[#111] md:rounded-2xl rounded-t-3xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] md:max-h-[90vh] animate-in slide-in-from-bottom-10 duration-300">
+      <div className="relative w-full max-w-lg bg-[#111] md:rounded-2xl rounded-t-3xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] md:max-h-[90vh] animate-in slide-in-from-bottom-10 duration-300 border-t md:border border-white/10">
         
-        {/* Mobile Pull Indicator */}
         <div className="md:hidden w-full flex justify-center pt-3 pb-1 absolute top-0 z-20 pointer-events-none">
             <div className="w-12 h-1.5 bg-gray-700 rounded-full"></div>
         </div>
 
-        {/* Header Image */}
         <div className="relative h-48 md:h-56 flex-shrink-0">
              {item.backdropPath ? (
                  <>
@@ -91,34 +91,33 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, isOpen, onClose, 
 
             <button 
                 onClick={onClose}
-                className="absolute top-4 right-4 p-2 bg-black/30 hover:bg-black/50 rounded-full text-white backdrop-blur-md z-30 md:block hidden"
+                className="absolute top-4 right-4 p-2 bg-black/30 hover:bg-black/50 rounded-full text-white backdrop-blur-md z-30 md:flex hidden items-center justify-center"
             >
                 <X size={20} />
             </button>
 
             <div className="absolute bottom-0 left-0 right-0 p-6 z-10">
-                <div className="flex items-center gap-2 text-white/70 text-xs font-bold uppercase tracking-wider mb-2">
+                <div className="flex items-center gap-2 text-white/70 text-[10px] font-black uppercase tracking-[0.1em] mb-1.5">
                     {isSeries ? <Tv size={12} /> : <Film size={12} />}
                     <span>{item.type}</span>
                     <span>•</span>
                     <span>{item.year || 'N/A'}</span>
                 </div>
-                <h2 className="text-3xl font-bold text-white leading-tight line-clamp-2 shadow-black drop-shadow-lg" title={item.title}>{item.title}</h2>
+                <h2 className="text-2xl md:text-3xl font-black text-white leading-tight line-clamp-2 drop-shadow-md" title={item.title}>{item.title}</h2>
             </div>
         </div>
 
-        <div className="p-6 space-y-8 overflow-y-auto custom-scrollbar flex-1 pb-safe">
+        <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1 pb-safe bg-gradient-to-b from-[#111] to-black">
             
-            {/* Watch Status Segmented Control */}
-            <div className="bg-[#1c1c1e] p-1 rounded-xl flex">
+            <div className="bg-[#1c1c1e] p-1 rounded-xl flex border border-white/5">
                 {(['watchlist', 'in-progress', 'watched'] as WatchStatus[]).map((s) => (
                     <button
                         key={s}
                         onClick={() => setStatus(s)}
-                        className={`flex-1 py-2.5 text-sm font-semibold rounded-lg transition-all ${
+                        className={`flex-1 py-2 text-[13px] font-bold rounded-lg transition-all ${
                             status === s 
-                            ? 'bg-[#636366] text-white shadow-md' 
-                            : 'text-gray-400 hover:text-white'
+                            ? 'bg-[#3a3a3c] text-white shadow-lg' 
+                            : 'text-gray-500 hover:text-white'
                         }`}
                     >
                         {s === 'in-progress' ? 'Watching' : s.charAt(0).toUpperCase() + s.slice(1)}
@@ -126,89 +125,85 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, isOpen, onClose, 
                 ))}
             </div>
 
-            {/* SERIES PROGRESS UI */}
             {isSeries && status === 'in-progress' && (
-                <div className="space-y-3 animate-in slide-in-from-top-4 fade-in">
-                    {/* Season Row */}
-                    <div className="flex items-center justify-between bg-[#1c1c1e] p-4 pr-2 rounded-2xl border border-white/5">
-                        <div className="flex flex-col pl-2">
-                            <span className="text-white font-semibold text-lg">Season</span>
-                            <span className="text-gray-500 text-xs uppercase tracking-wide">Current</span>
+                <div className="space-y-4 animate-in slide-in-from-top-4 fade-in">
+                    {/* Big "Up Next" Dashboard */}
+                    <div className="bg-gradient-to-br from-blue-600/20 to-indigo-900/40 p-5 rounded-2xl border border-blue-500/20 shadow-xl group">
+                        <div className="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 className="text-blue-400 text-xs font-black uppercase tracking-[0.1em] mb-1">Up Next</h3>
+                                <p className="text-white text-2xl font-black tracking-tight">S{season} E{episode}</p>
+                            </div>
+                            <div className="bg-blue-600 p-3 rounded-full shadow-lg group-active:scale-90 transition-transform">
+                                <Play size={20} fill="white" className="text-white" />
+                            </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                            <button onClick={() => setSeason(Math.max(1, season - 1))} className="w-12 h-12 rounded-full bg-[#2c2c2e] text-white flex items-center justify-center active:scale-90 transition-transform touch-manipulation">
-                                <Minus size={22} />
-                            </button>
-                            <span className="w-10 text-center text-2xl font-bold font-mono text-white tabular-nums">{season}</span>
-                            <button onClick={() => setSeason(season + 1)} className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center active:scale-90 transition-transform shadow-lg shadow-white/10 touch-manipulation">
-                                <PlusIcon size={24} strokeWidth={3} />
-                            </button>
-                        </div>
+                        <button 
+                            onClick={handleNextEpisode}
+                            className="w-full bg-white text-black py-3 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl"
+                        >
+                            Mark Episode {episode} Finished <ChevronRight size={16} strokeWidth={3} />
+                        </button>
                     </div>
-                    
-                    {/* Episode Row */}
-                    <div className="flex items-center justify-between bg-[#1c1c1e] p-4 pr-2 rounded-2xl border border-white/5">
-                        <div className="flex flex-col pl-2">
-                            <span className="text-white font-semibold text-lg">Episode</span>
-                            <span className="text-gray-500 text-xs uppercase tracking-wide">Current</span>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-[#1c1c1e] p-4 rounded-xl border border-white/5 flex flex-col items-center">
+                            <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-2">Season</span>
+                            <div className="flex items-center gap-4">
+                                <button onClick={() => setSeason(Math.max(1, season - 1))} className="text-gray-400 hover:text-white transition-colors"><Minus size={18}/></button>
+                                <span className="text-xl font-black text-white w-6 text-center">{season}</span>
+                                <button onClick={() => setSeason(season + 1)} className="text-gray-400 hover:text-white transition-colors"><PlusIcon size={18}/></button>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                            <button onClick={() => setEpisode(Math.max(1, episode - 1))} className="w-12 h-12 rounded-full bg-[#2c2c2e] text-white flex items-center justify-center active:scale-90 transition-transform touch-manipulation">
-                                <Minus size={22} />
-                            </button>
-                            <span className="w-10 text-center text-2xl font-bold font-mono text-white tabular-nums">{episode}</span>
-                            <button onClick={() => {
-                                setEpisode(episode + 1);
-                                // Optional haptic feedback logic here if using Web Vibrate API
-                                if (navigator.vibrate) navigator.vibrate(10);
-                            }} className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center active:scale-90 transition-transform shadow-lg shadow-white/10 touch-manipulation">
-                                <PlusIcon size={24} strokeWidth={3} />
-                            </button>
+                        <div className="bg-[#1c1c1e] p-4 rounded-xl border border-white/5 flex flex-col items-center">
+                            <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-2">Episode</span>
+                            <div className="flex items-center gap-4">
+                                <button onClick={() => setEpisode(Math.max(1, episode - 1))} className="text-gray-400 hover:text-white transition-colors"><Minus size={18}/></button>
+                                <span className="text-xl font-black text-white w-6 text-center">{episode}</span>
+                                <button onClick={() => setEpisode(episode + 1)} className="text-gray-400 hover:text-white transition-colors"><PlusIcon size={18}/></button>
+                            </div>
                         </div>
                     </div>
                 </div>
             )}
 
-             {/* MOVIE SPECIFIC: Release Source */}
              {isMovie && (
-                <div className="bg-[#1c1c1e] p-4 rounded-2xl border border-white/5">
-                    <label className="block text-gray-400 text-xs font-bold uppercase tracking-wide mb-3">Release Type</label>
-                    <div className="flex gap-3 mb-4">
+                <div className="space-y-4">
+                    <div className="bg-[#1c1c1e] p-1 rounded-xl flex border border-white/5">
                         <button 
                             onClick={() => setReleaseSource('Theater')}
-                            className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2 ${
+                            className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
                                 releaseSource === 'Theater' 
-                                ? 'bg-blue-600/20 border-blue-500 text-blue-400' 
-                                : 'bg-[#2c2c2e] border-transparent text-gray-400'
+                                ? 'bg-[#3a3a3c] text-blue-400 shadow-md' 
+                                : 'text-gray-500'
                             }`}
                         >
-                            <Ticket size={18} /> Theater
+                            <Ticket size={16} /> Theater
                         </button>
                         <button 
                             onClick={() => setReleaseSource('VOD')}
-                            className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold transition-all border flex items-center justify-center gap-2 ${
+                            className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
                                 releaseSource === 'VOD' 
-                                ? 'bg-purple-600/20 border-purple-500 text-purple-400' 
-                                : 'bg-[#2c2c2e] border-transparent text-gray-400'
+                                ? 'bg-[#3a3a3c] text-purple-400 shadow-md' 
+                                : 'text-gray-500'
                             }`}
                         >
-                            <MonitorPlay size={18} /> Original VOD
+                            <MonitorPlay size={16} /> VOD / Digital
                         </button>
                     </div>
 
-                    {/* VOD Provider Selector */}
                     {releaseSource === 'VOD' && (
-                        <div className="animate-in slide-in-from-top-2">
-                             <label className="block text-gray-500 text-xs font-medium mb-2 uppercase tracking-wide">Platform</label>
-                             <div className="flex flex-wrap gap-2">
+                        <div className="p-4 bg-[#1c1c1e] rounded-xl border border-white/5 animate-in fade-in slide-in-from-top-2">
+                             <label className="block text-gray-500 text-[9px] font-black uppercase tracking-widest mb-3">Platform</label>
+                             <div className="flex flex-wrap gap-1.5">
                                 {vodProviders.map(provider => (
                                     <button
                                         key={provider}
                                         onClick={() => setVodProvider(provider)}
-                                        className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all border ${
+                                        className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all border ${
                                             vodProvider === provider 
-                                            ? 'bg-purple-500 text-white border-purple-500' 
-                                            : 'bg-[#2c2c2e] border-transparent text-gray-400'
+                                            ? 'bg-purple-600/20 border-purple-500 text-purple-300' 
+                                            : 'bg-black/20 border-white/5 text-gray-500'
                                         }`}
                                     >
                                         {provider}
@@ -220,19 +215,18 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, isOpen, onClose, 
                 </div>
             )}
 
-            {/* MOVIE SPECIFIC: Personal Rating */}
             {isMovie && status === 'watched' && (
-                <div className="animate-in fade-in">
-                     <label className="block text-gray-400 text-xs font-bold uppercase tracking-wide mb-3">Rating</label>
+                <div className="animate-in fade-in p-4 bg-[#1c1c1e] rounded-xl border border-white/5">
+                     <label className="block text-gray-500 text-[9px] font-black uppercase tracking-widest mb-3">Review</label>
                      <div className="flex flex-wrap gap-2">
                         {ratingOptions.map((opt) => (
                             <button
                                 key={opt.value}
                                 onClick={() => setPersonalRating(opt.value)}
-                                className={`px-4 py-2 rounded-full text-xs font-bold transition-all active:scale-95 ${
+                                className={`px-4 py-2 rounded-lg text-[11px] font-black transition-all active:scale-95 ${
                                     personalRating === opt.value
-                                    ? `${opt.color} shadow-lg scale-105 ring-2 ring-white/20`
-                                    : 'bg-[#2c2c2e] text-gray-400 hover:bg-[#3a3a3c]'
+                                    ? `${opt.color} shadow-lg ring-2 ring-white/10`
+                                    : 'bg-black/30 text-gray-500 border border-white/5'
                                 }`}
                             >
                                 {opt.value}
@@ -242,37 +236,32 @@ const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, isOpen, onClose, 
                 </div>
             )}
 
-            {/* Footer Actions */}
             <div className="flex gap-4 pt-4 mt-auto">
                  <button 
                     onClick={() => {
-                        if (isDeleting) {
-                            onDelete(item.id);
-                        } else {
+                        if (isDeleting) onDelete(item.id);
+                        else {
                             setIsDeleting(true);
                             setTimeout(() => setIsDeleting(false), 3000);
                         }
                     }}
-                    className={`p-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${
+                    className={`h-14 px-5 rounded-xl font-black transition-all flex items-center justify-center gap-2 ${
                         isDeleting 
                         ? 'flex-1 bg-red-600 text-white animate-pulse' 
-                        : 'w-14 bg-[#2c2c2e] text-gray-400 hover:text-red-500'
+                        : 'bg-[#1c1c1e] text-gray-500 border border-white/5 hover:text-red-500'
                     }`}
                 >
                     <Trash2 size={20} />
-                    {isDeleting && <span>Confirm</span>}
+                    {isDeleting && <span className="text-xs">Confirm Delete</span>}
                 </button>
                 
                 <button 
                     onClick={handleSave}
-                    className="flex-1 bg-white text-black p-4 rounded-xl font-bold text-lg hover:bg-gray-200 active:scale-95 transition-all flex items-center justify-center gap-2 shadow-xl"
+                    className="flex-1 bg-white text-black h-14 rounded-xl font-black text-base hover:bg-gray-100 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-2xl"
                 >
-                    <Save size={20} /> Save
+                    <Save size={20} /> Save Changes
                 </button>
             </div>
-            
-            {/* Safe Area Spacer for bottom sheet */}
-            <div className="h-6 md:hidden"></div>
         </div>
       </div>
     </div>
